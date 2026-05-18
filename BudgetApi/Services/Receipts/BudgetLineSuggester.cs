@@ -52,6 +52,7 @@ public class BudgetLineSuggester
         try
         {
             var content = await CallOllama(SystemPrompt, userMsg, 120, ct);
+            _log.LogDebug("Matcher raw output: {Content}", content);
             using var doc = JsonDocument.Parse(content);
             var root = doc.RootElement;
             if (!root.TryGetProperty("line_id", out var idEl) || idEl.ValueKind != JsonValueKind.Number)
@@ -64,8 +65,6 @@ public class BudgetLineSuggester
             }
             var conf = root.TryGetProperty("confidence", out var cEl) && cEl.ValueKind == JsonValueKind.String
                 ? cEl.GetString() ?? "low" : "low";
-            // "low" confidence is effectively no match — let the user pick.
-            if (string.Equals(conf, "low", StringComparison.OrdinalIgnoreCase)) return null;
             return new SuggestedLine(id, conf);
         }
         catch (Exception e)
@@ -100,26 +99,29 @@ public class BudgetLineSuggester
         return null;
     }
 
-    private const string SystemPrompt = """
-        You match a new construction expense to ONE existing budget line.
-        Reply with VALID JSON ONLY:
-        {"line_id": <int from the list, or null>, "confidence": "high"|"medium"|"low"}
-
-        Rules:
-        - Pick the line whose category + description best fits what the expense was for.
-        - Prefer lines whose category matches the expense category (Materials/Labor/etc).
-        - If no line is a reasonable fit, return {"line_id": null, "confidence": "low"}.
-        - "high" = obvious match (e.g. cement bags → Concrete & Masonry).
-        - "medium" = plausible but not certain.
-        - "low" = guessing; will be discarded.
-        """;
+    private const string SystemPrompt =
+        "You match a new project expense to ONE budget line from the list. " +
+        "Reply with VALID JSON ONLY: " +
+        "{\"line_id\": <int from the list, or null>, \"confidence\": \"high\"|\"medium\"|\"low\"}\n\n" +
+        "Pick the line whose scope (category + description) most clearly covers what was bought. " +
+        "The expense DESCRIPTION is the strongest signal; its category label is generic. " +
+        "When two lines share a category, the DESCRIPTION disambiguates. " +
+        "Prefer the most specific line that fits. " +
+        "Always pick a line if any could plausibly cover this expense — mark \"low\" when guessing. " +
+        "Return null only when nothing in the list could relate to this expense at all.";
 
     private async Task<string> CallOllama(string systemPrompt, string userMsg, int maxTokens, CancellationToken ct)
     {
         var http = _httpFactory.CreateClient();
         http.BaseAddress = new Uri(_cfg["Ollama:BaseUrl"] ?? "http://localhost:11434");
-        http.Timeout = TimeSpan.FromMinutes(2);
-        var model = _cfg["Budget:Model"] ?? _cfg["Receipts:Model"] ?? _cfg["Ollama:ChatModel"] ?? "qwen2.5:3b";
+        // First inference on a freshly loaded mid-size model can exceed 2 min on CPU.
+        http.Timeout = TimeSpan.FromMinutes(5);
+        // Reasoning task — a small model (3B) tends to over-decline. Prefer a mid model.
+        var model = _cfg["Receipts:MatcherModel"]
+            ?? _cfg["Budget:Model"]
+            ?? _cfg["Ollama:ReasoningModel"]
+            ?? _cfg["Ollama:ChatModel"]
+            ?? "llama3.1:8b";
         var body = new
         {
             model,

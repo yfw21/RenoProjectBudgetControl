@@ -6,7 +6,7 @@ namespace BudgetApi.Controllers;
 
 [ApiController]
 [Authorize]
-[Route("api/expenses/parse")]
+[Route("api/expenses")]
 public class ExpenseParseController : ControllerBase
 {
     private readonly ReceiptExtractor _extractor;
@@ -16,32 +16,43 @@ public class ExpenseParseController : ControllerBase
         _extractor = extractor; _suggester = suggester;
     }
 
-    [HttpPost]
+    [HttpPost("parse")]
     [RequestSizeLimit(20_000_000)]
-    public async Task<IActionResult> Parse(IFormFile file, [FromForm] int? projectId, CancellationToken ct)
+    public async Task<IActionResult> Parse(IFormFile file, CancellationToken ct)
     {
         if (file == null || file.Length == 0) return BadRequest(new { error = "file required" });
         var result = await _extractor.ExtractAsync(file, ct);
-        var suggestion = projectId.HasValue
-            ? await _suggester.SuggestAsync(projectId.Value, result.Description, result.Vendor, result.Category, ct)
-            : null;
-        return Ok(ToDto(result, suggestion));
+        return Ok(ToDto(result));
     }
 
-    public record QuickParseRequest(string Text, int? ProjectId);
+    public record QuickParseRequest(string Text);
 
-    [HttpPost("text")]
+    [HttpPost("parse/text")]
     public async Task<IActionResult> ParseText([FromBody] QuickParseRequest req, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(req?.Text)) return BadRequest(new { error = "text required" });
         var result = await _extractor.QuickParseAsync(req.Text, ct);
-        var suggestion = req.ProjectId.HasValue
-            ? await _suggester.SuggestAsync(req.ProjectId.Value, result.Description, null, result.Category, ct)
-            : null;
-        return Ok(ToDto(result, suggestion));
+        return Ok(ToDto(result));
     }
 
-    private static object ToDto(Services.Receipts.ExtractedExpense result, SuggestedLine? suggestion) => new
+    public record SuggestLineRequest(int ProjectId, string? Description, string? Vendor, string? Category);
+
+    /// <summary>
+    /// Asynchronous companion to /parse. Kept separate so the receipt-parse round trip stays fast;
+    /// budget-line matching uses a larger reasoning model and can take ~30-90s on cold start.
+    /// </summary>
+    [HttpPost("suggest-line")]
+    public async Task<IActionResult> SuggestLine([FromBody] SuggestLineRequest req, CancellationToken ct)
+    {
+        var suggestion = await _suggester.SuggestAsync(req.ProjectId, req.Description, req.Vendor, req.Category, ct);
+        return Ok(new
+        {
+            budgetLineId = suggestion?.LineId,
+            confidence = suggestion?.Confidence
+        });
+    }
+
+    private static object ToDto(Services.Receipts.ExtractedExpense result) => new
     {
         amount = result.Amount,
         vendor = result.Vendor,
@@ -51,8 +62,6 @@ public class ExpenseParseController : ControllerBase
         missing = result.Missing,
         rawText = result.RawText,
         source = result.Source,
-        note = result.Note,
-        budgetLineId = suggestion?.LineId,
-        budgetLineConfidence = suggestion?.Confidence
+        note = result.Note
     };
 }

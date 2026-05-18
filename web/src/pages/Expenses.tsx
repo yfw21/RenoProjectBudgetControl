@@ -21,6 +21,9 @@ export function Expenses() {
   const [missing, setMissing] = useState<string[]>([])
   const [parseNote, setParseNote] = useState<string | null>(null)
   const [lineSuggestionSource, setLineSuggestionSource] = useState<'server' | 'local' | null>(null)
+  const [suggestingLine, setSuggestingLine] = useState(false)
+  const userPickedLineRef = useRef(false)
+  const suggestSeqRef = useRef(0)
   const [rawText, setRawText] = useState<string | null>(null)
   const [showRaw, setShowRaw] = useState(false)
   const [parsing, setParsing] = useState(false)
@@ -63,6 +66,33 @@ export function Expenses() {
     setRawText(null)
     setShowRaw(false)
     setLineSuggestionSource(null)
+    setSuggestingLine(false)
+    userPickedLineRef.current = false
+    suggestSeqRef.current++ // invalidate any in-flight suggestion from a prior receipt
+  }
+
+  // Fires after the form is open. Async — does not block the parse round trip.
+  // If the user picks a line manually before this returns, we drop the suggestion.
+  async function requestLineSuggestion(description: string, vendor: string | null, category: string | null) {
+    if (!current) return
+    const seq = ++suggestSeqRef.current
+    setSuggestingLine(true)
+    try {
+      const r = await fetch('/api/expenses/suggest-line', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: current.id, description, vendor, category }),
+      })
+      if (!r.ok) return
+      const data = await r.json()
+      if (seq !== suggestSeqRef.current) return        // stale: form was reset or replaced
+      if (userPickedLineRef.current) return            // user already chose; don't overwrite
+      const id = data.budgetLineId as number | null
+      if (id == null) return
+      setDraft(d => ({ ...d, budgetLineId: id }))
+      setLineSuggestionSource('server')
+    } catch { /* network blip — silent; dropdown stays as-is */ }
+    finally { if (seq === suggestSeqRef.current) setSuggestingLine(false) }
   }
 
   async function quickParse() {
@@ -72,13 +102,13 @@ export function Expenses() {
       const r = await fetch('/api/expenses/parse/text', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: quickText.trim(), projectId: current?.id ?? null }),
+        body: JSON.stringify({ text: quickText.trim() }),
       })
       const data = await r.json()
       if (!r.ok) { alert(`Parse failed: ${data.error || r.statusText}`); return }
       const cat = data.category || 'General'
       const localGuess = suggestBudgetLine(cat)
-      const lineId = data.budgetLineId ?? localGuess
+      userPickedLineRef.current = false
       setDraft({
         category: cat,
         description: data.description || '',
@@ -86,9 +116,9 @@ export function Expenses() {
         budget: 0,
         vendor: data.vendor || '',
         date: data.date || today(),
-        budgetLineId: lineId,
+        budgetLineId: localGuess,
       })
-      setLineSuggestionSource(lineId == null ? null : (data.budgetLineId != null ? 'server' : 'local'))
+      setLineSuggestionSource(localGuess == null ? null : 'local')
       setReceiptFile(null)
       setMissing(data.missing || [])
       setParseNote(data.note || `Parsed from: "${quickText.trim()}"`)
@@ -97,6 +127,8 @@ export function Expenses() {
       setShowQuickAdd(false)
       setQuickText('')
       setShowForm(true)
+      // fire-and-forget — the dropdown will update when the LLM matcher returns
+      requestLineSuggestion(data.description || '', data.vendor || null, cat)
     } catch (e: any) {
       alert(`Parse failed: ${e.message}`)
     } finally {
@@ -121,13 +153,12 @@ export function Expenses() {
     try {
       const fd = new FormData()
       fd.append('file', file)
-      if (current?.id) fd.append('projectId', String(current.id))
       const r = await fetch('/api/expenses/parse', { method: 'POST', credentials: 'include', body: fd })
       const data = await r.json()
       if (!r.ok) { alert(`Parse failed: ${data.error || r.statusText}`); return }
       const cat = data.category || 'General'
       const localGuess = suggestBudgetLine(cat)
-      const lineId = data.budgetLineId ?? localGuess
+      userPickedLineRef.current = false
       setDraft({
         category: cat,
         description: data.description || '',
@@ -135,15 +166,17 @@ export function Expenses() {
         budget: 0,
         vendor: data.vendor || '',
         date: data.date || today(),
-        budgetLineId: lineId,
+        budgetLineId: localGuess,
       })
-      setLineSuggestionSource(lineId == null ? null : (data.budgetLineId != null ? 'server' : 'local'))
+      setLineSuggestionSource(localGuess == null ? null : 'local')
       setReceiptFile(file)
       setMissing(data.missing || [])
       setParseNote(data.note || null)
       setRawText(data.rawText || null)
       setShowRaw(false)
       setShowForm(true)
+      // fire-and-forget — the dropdown will update when the LLM matcher returns
+      requestLineSuggestion(data.description || '', data.vendor || null, cat)
     } catch (e: any) {
       alert(`Parse failed: ${e.message}`)
     } finally {
@@ -314,6 +347,7 @@ export function Expenses() {
                 value={draft.budgetLineId ?? ''}
                 onChange={ev => {
                   const v = ev.target.value
+                  userPickedLineRef.current = true
                   setDraft({ ...draft, budgetLineId: v === '' ? null : parseInt(v, 10) })
                   setLineSuggestionSource(null)
                 }}
@@ -323,12 +357,15 @@ export function Expenses() {
                   <option key={l.id} value={l.id}>{l.category} · {l.description}</option>
                 ))}
               </select>
-              {lineSuggestionSource && draft.budgetLineId != null && (
+              {suggestingLine && (
+                <span className="muted" style={{ fontSize: 11 }}>✦ AI is suggesting a match… (you can pick now to skip)</span>
+              )}
+              {!suggestingLine && lineSuggestionSource && draft.budgetLineId != null && (
                 <span className="muted" style={{ fontSize: 11 }}>
                   {lineSuggestionSource === 'server' ? '✦ Auto-matched by AI' : 'Matched by category'} — change if wrong
                 </span>
               )}
-              {budgetLines.length === 0 && (
+              {!suggestingLine && budgetLines.length === 0 && (
                 <span className="muted" style={{ fontSize: 11 }}>No budget lines yet — import a budget to enable auto-matching</span>
               )}
             </label>
