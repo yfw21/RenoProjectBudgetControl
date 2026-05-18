@@ -104,6 +104,100 @@ namespace BudgetApi.Controllers
             return NoContent();
         }
 
+        public record BatchItem(string Description, decimal Actual, string? Vendor, string? Date, string? Category, int? BudgetLineId);
+        public record BatchRequest(int ProjectId, string? Vendor, string? Date, List<BatchItem> Items);
+
+        /// <summary>
+        /// Creates many expenses in one shot (used by the contractor-invoice flow where a single
+        /// PDF maps to multiple budget lines). Optionally attaches a receipt file to ALL of them.
+        /// Auto-bumps % complete once per affected budget line at the end.
+        /// </summary>
+        [HttpPost("batch")]
+        [RequestSizeLimit(20_000_000)]
+        public async Task<IActionResult> CreateBatch([FromForm] string payload, IFormFile? file)
+        {
+            BatchRequest? req;
+            try { req = System.Text.Json.JsonSerializer.Deserialize<BatchRequest>(payload,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
+            catch (Exception e) { return BadRequest(new { error = $"bad payload: {e.Message}" }); }
+            if (req == null || req.Items == null || req.Items.Count == 0)
+                return BadRequest(new { error = "items required" });
+
+            int? receiptBlobId = null;
+            if (file != null && file.Length > 0)
+            {
+                var storeRoot = HttpContext.RequestServices.GetRequiredService<IConfiguration>()["Files:Root"]
+                    ?? Path.Combine(AppContext.BaseDirectory, "uploads");
+                Directory.CreateDirectory(storeRoot);
+                var safeName = $"{Guid.NewGuid():N}_{Path.GetFileName(file.FileName)}";
+                var fullPath = Path.Combine(storeRoot, safeName);
+                await using (var fs = System.IO.File.Create(fullPath)) await file.CopyToAsync(fs);
+                var blob = new FileBlob
+                {
+                    ProjectId = req.ProjectId,
+                    FileName = file.FileName,
+                    ContentType = file.ContentType ?? "application/octet-stream",
+                    StoragePath = fullPath,
+                    SizeBytes = file.Length,
+                    Kind = "receipt"
+                };
+                _context.FileBlobs.Add(blob);
+                await _context.SaveChangesAsync();
+                receiptBlobId = blob.Id;
+            }
+
+            DateTime? parsedDate = null;
+            if (!string.IsNullOrWhiteSpace(req.Date) && DateTime.TryParse(req.Date, out var dt))
+                parsedDate = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+
+            var created = new List<BudgetItem>();
+            foreach (var it in req.Items)
+            {
+                DateTime? itemDate = parsedDate;
+                if (!string.IsNullOrWhiteSpace(it.Date) && DateTime.TryParse(it.Date, out var itDt))
+                    itemDate = DateTime.SpecifyKind(itDt, DateTimeKind.Utc);
+                var item = new BudgetItem
+                {
+                    ProjectId = req.ProjectId,
+                    Category = it.Category ?? "General",
+                    Description = it.Description,
+                    Budget = 0,
+                    Actual = it.Actual,
+                    Vendor = it.Vendor ?? req.Vendor,
+                    Date = itemDate,
+                    Status = "paid",
+                    BudgetLineId = it.BudgetLineId,
+                    ReceiptFileBlobId = receiptBlobId
+                };
+                _context.BudgetItems.Add(item);
+                created.Add(item);
+            }
+            await _context.SaveChangesAsync();
+
+            // Aggregate auto-bump: one update per affected line, not per expense.
+            var affectedLineIds = created.Where(x => x.BudgetLineId.HasValue).Select(x => x.BudgetLineId!.Value).Distinct().ToList();
+            foreach (var lineId in affectedLineIds)
+            {
+                var line = await _context.BudgetItems.FindAsync(lineId);
+                if (line == null || line.Budget <= 0) continue;
+                var actuals = await _context.BudgetItems.Where(b => b.BudgetLineId == lineId).Select(b => b.Actual).ToListAsync();
+                var spent = actuals.Sum();
+                var pct = (int)Math.Min(100, Math.Round((double)(spent / line.Budget) * 100));
+                if (pct > line.PercentComplete)
+                {
+                    line.PercentComplete = pct;
+                }
+            }
+            if (affectedLineIds.Count > 0) await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                createdIds = created.Select(c => c.Id).ToList(),
+                receiptFileBlobId = receiptBlobId,
+                affectedLineIds
+            });
+        }
+
         [HttpPost("{id}/receipt")]
         [RequestSizeLimit(20_000_000)]
         public async Task<IActionResult> AttachReceipt(int id, IFormFile file, IConfiguration cfg)

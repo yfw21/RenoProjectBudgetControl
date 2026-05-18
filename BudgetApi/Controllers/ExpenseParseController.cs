@@ -35,6 +35,47 @@ public class ExpenseParseController : ControllerBase
         return Ok(ToDto(result));
     }
 
+    [HttpPost("parse-invoice")]
+    [RequestSizeLimit(20_000_000)]
+    public async Task<IActionResult> ParseInvoice(
+        IFormFile file,
+        [FromForm] int projectId,
+        [FromServices] InvoiceLineExtractor invoiceExtractor,
+        CancellationToken ct)
+    {
+        if (file == null || file.Length == 0) return BadRequest(new { error = "file required" });
+        var invoice = await invoiceExtractor.ExtractAsync(file, ct);
+
+        // Run line-by-line suggestion serially. Concurrent ollama calls would share the same
+        // model slot and serialize anyway; serial keeps the model warm.
+        var lines = new List<object>();
+        foreach (var l in invoice.Lines)
+        {
+            var suggestion = await _suggester.SuggestAsync(projectId, l.Description, invoice.Vendor, null, ct);
+            lines.Add(new
+            {
+                description = l.Description,
+                quantity = l.Quantity,
+                unitPrice = l.UnitPrice,
+                amount = l.Amount,
+                suggestedBudgetLineId = suggestion?.LineId,
+                suggestedConfidence = suggestion?.Confidence
+            });
+        }
+
+        return Ok(new
+        {
+            vendor = invoice.Vendor,
+            invoiceNumber = invoice.InvoiceNumber,
+            invoiceDate = invoice.InvoiceDate?.ToString("yyyy-MM-dd"),
+            total = invoice.Total,
+            lines,
+            rawText = invoice.RawText,
+            source = invoice.Source,
+            note = invoice.Note
+        });
+    }
+
     public record SuggestLineRequest(int ProjectId, string? Description, string? Vendor, string? Category);
 
     /// <summary>

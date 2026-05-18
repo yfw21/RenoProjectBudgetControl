@@ -11,6 +11,21 @@ type Expense = {
 }
 type BudgetLine = { id: number; category: string; description: string; budget: number }
 
+type InvoiceReviewLine = {
+  description: string
+  amount: number
+  budgetLineId: number | null
+  confidence: string | null
+}
+type InvoiceReview = {
+  vendor: string
+  invoiceNumber: string
+  invoiceDate: string
+  total: number | null
+  note: string | null
+  lines: InvoiceReviewLine[]
+}
+
 export function Expenses() {
   const { current } = useProjects()
   const [expenses, setExpenses] = useState<Expense[]>([])
@@ -24,6 +39,11 @@ export function Expenses() {
   const [suggestingLine, setSuggestingLine] = useState(false)
   const userPickedLineRef = useRef(false)
   const suggestSeqRef = useRef(0)
+  const invoiceInputRef = useRef<HTMLInputElement>(null)
+  const [invoiceParsing, setInvoiceParsing] = useState(false)
+  const [invoiceData, setInvoiceData] = useState<InvoiceReview | null>(null)
+  const [invoiceSaving, setInvoiceSaving] = useState(false)
+  const [invoiceFile, setInvoiceFile] = useState<File | null>(null)
   const [rawText, setRawText] = useState<string | null>(null)
   const [showRaw, setShowRaw] = useState(false)
   const [parsing, setParsing] = useState(false)
@@ -148,6 +168,70 @@ export function Expenses() {
     setQuickRecording(true)
   }
 
+  async function smartInvoiceUpload(file: File) {
+    if (!current) return
+    setInvoiceParsing(true)
+    setInvoiceFile(file)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('projectId', String(current.id))
+      const r = await fetch('/api/expenses/parse-invoice', { method: 'POST', credentials: 'include', body: fd })
+      const data = await r.json()
+      if (!r.ok) { alert(`Invoice parse failed: ${data.error || r.statusText}`); return }
+      setInvoiceData({
+        vendor: data.vendor || '',
+        invoiceNumber: data.invoiceNumber || '',
+        invoiceDate: data.invoiceDate || today(),
+        total: typeof data.total === 'number' ? data.total : null,
+        note: data.note || null,
+        lines: (data.lines || []).map((l: any) => ({
+          description: l.description || '',
+          amount: l.amount ?? 0,
+          budgetLineId: l.suggestedBudgetLineId ?? null,
+          confidence: l.suggestedConfidence ?? null,
+        })),
+      })
+    } catch (e: any) {
+      alert(`Invoice parse failed: ${e.message}`)
+    } finally {
+      setInvoiceParsing(false)
+      if (invoiceInputRef.current) invoiceInputRef.current.value = ''
+    }
+  }
+
+  async function confirmInvoice() {
+    if (!current || !invoiceData) return
+    const valid = invoiceData.lines.filter(l => l.amount > 0 && l.description.trim().length > 0)
+    if (valid.length === 0) { alert('No line items to save.'); return }
+    setInvoiceSaving(true)
+    try {
+      const payload = {
+        projectId: current.id,
+        vendor: invoiceData.vendor || null,
+        date: invoiceData.invoiceDate || null,
+        items: valid.map(l => ({
+          description: l.description.trim(),
+          actual: l.amount,
+          vendor: invoiceData.vendor || null,
+          date: invoiceData.invoiceDate || null,
+          category: 'Construction',
+          budgetLineId: l.budgetLineId,
+        })),
+      }
+      const fd = new FormData()
+      fd.append('payload', JSON.stringify(payload))
+      if (invoiceFile) fd.append('file', invoiceFile)
+      const r = await fetch('/api/budgetitems/batch', { method: 'POST', credentials: 'include', body: fd })
+      const data = await r.json()
+      if (!r.ok) { alert(`Save failed: ${data.error || r.statusText}`); return }
+      setInvoiceData(null)
+      setInvoiceFile(null)
+      await load()
+    } catch (e: any) { alert(`Save failed: ${e.message}`) }
+    finally { setInvoiceSaving(false) }
+  }
+
   async function smartUpload(file: File) {
     setParsing(true)
     try {
@@ -250,7 +334,7 @@ export function Expenses() {
           <button className="btn-primary" onClick={() => setShowQuickAdd(true)} title="Type or say what you spent">
             ⚡ Quick add
           </button>
-          <button className="btn-primary" onClick={() => smartInputRef.current?.click()} disabled={parsing} title="Upload a receipt — fields auto-extracted">
+          <button className="btn-primary" onClick={() => smartInputRef.current?.click()} disabled={parsing} title="Upload a single-item receipt — fields auto-extracted">
             {parsing ? '… reading' : '✦ Smart upload'}
           </button>
           <input
@@ -259,6 +343,16 @@ export function Expenses() {
             accept="image/*,application/pdf,text/*"
             style={{ display: 'none' }}
             onChange={e => { const f = e.target.files?.[0]; if (f) smartUpload(f) }}
+          />
+          <button className="btn-primary" onClick={() => invoiceInputRef.current?.click()} disabled={invoiceParsing} title="Upload a multi-line invoice — each line auto-matched to a budget line">
+            {invoiceParsing ? '… reading invoice' : '📋 Smart invoice'}
+          </button>
+          <input
+            ref={invoiceInputRef}
+            type="file"
+            accept="application/pdf,image/*,text/*"
+            style={{ display: 'none' }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) smartInvoiceUpload(f) }}
           />
           <a className="btn-ghost" href={exportUrl}>⤓ Export .xlsx</a>
           <button className="btn-ghost" onClick={() => importInputRef.current?.click()} disabled={importing}>
@@ -420,6 +514,127 @@ export function Expenses() {
       )}
 
       {lightbox && <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />}
+
+      {invoiceData && (
+        <div className="modal-backdrop" onClick={() => !invoiceSaving && setInvoiceData(null)}>
+          <div className="modal" style={{ maxWidth: 920 }} onClick={e => e.stopPropagation()}>
+            <h2>📋 Review invoice — {invoiceData.vendor || 'Unknown vendor'}</h2>
+            {invoiceData.note && <div className="banner-info">{invoiceData.note}</div>}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+              <label>Vendor
+                <input value={invoiceData.vendor}
+                       onChange={ev => setInvoiceData({ ...invoiceData, vendor: ev.target.value })} />
+              </label>
+              <label>Invoice #
+                <input value={invoiceData.invoiceNumber}
+                       onChange={ev => setInvoiceData({ ...invoiceData, invoiceNumber: ev.target.value })} />
+              </label>
+              <label>Date
+                <input type="date" value={invoiceData.invoiceDate}
+                       onChange={ev => setInvoiceData({ ...invoiceData, invoiceDate: ev.target.value })} />
+              </label>
+            </div>
+
+            <p className="muted" style={{ fontSize: 13, marginTop: 16, marginBottom: 6 }}>
+              {invoiceData.lines.length} line item{invoiceData.lines.length === 1 ? '' : 's'} extracted —
+              edit, change the budget line, or remove rows before saving.
+            </p>
+
+            <table className="data" style={{ marginTop: 0 }}>
+              <thead>
+                <tr>
+                  <th style={{ width: '38%' }}>Description</th>
+                  <th style={{ width: '14%', textAlign: 'right' }}>Amount</th>
+                  <th>Budget line</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoiceData.lines.map((l, i) => (
+                  <tr key={i}>
+                    <td>
+                      <input style={{ width: '100%' }} value={l.description}
+                             onChange={ev => {
+                               const next = [...invoiceData.lines]
+                               next[i] = { ...l, description: ev.target.value }
+                               setInvoiceData({ ...invoiceData, lines: next })
+                             }} />
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <input type="number" step="0.01" style={{ width: 90, textAlign: 'right' }}
+                             value={l.amount}
+                             onChange={ev => {
+                               const next = [...invoiceData.lines]
+                               next[i] = { ...l, amount: parseFloat(ev.target.value) || 0 }
+                               setInvoiceData({ ...invoiceData, lines: next })
+                             }} />
+                    </td>
+                    <td>
+                      <select style={{ width: '100%' }} value={l.budgetLineId ?? ''}
+                              onChange={ev => {
+                                const v = ev.target.value
+                                const next = [...invoiceData.lines]
+                                next[i] = { ...l, budgetLineId: v === '' ? null : parseInt(v, 10), confidence: null }
+                                setInvoiceData({ ...invoiceData, lines: next })
+                              }}>
+                        <option value="">— None —</option>
+                        {budgetLines.map(bl => (
+                          <option key={bl.id} value={bl.id}>{bl.category} · {bl.description}</option>
+                        ))}
+                      </select>
+                      {l.confidence && (
+                        <span className="muted" style={{ fontSize: 11 }}>
+                          ✦ {l.confidence === 'high' ? 'High confidence' : l.confidence === 'medium' ? 'Plausible — verify' : 'Best guess — verify'}
+                        </span>
+                      )}
+                    </td>
+                    <td>
+                      <button className="btn-ghost danger" title="Remove line"
+                              onClick={() => {
+                                const next = invoiceData.lines.filter((_, j) => j !== i)
+                                setInvoiceData({ ...invoiceData, lines: next })
+                              }}>×</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th>Lines total</th>
+                  <th style={{ textAlign: 'right' }}>
+                    ${invoiceData.lines.reduce((s, l) => s + (l.amount || 0), 0).toFixed(2)}
+                  </th>
+                  <th colSpan={2} style={{ fontWeight: 'normal' }}>
+                    {invoiceData.total != null && (
+                      <span className="muted">
+                        Invoice total: ${invoiceData.total.toFixed(2)}
+                        {(() => {
+                          const diff = invoiceData.total! - invoiceData.lines.reduce((s, l) => s + (l.amount || 0), 0)
+                          if (Math.abs(diff) < 0.01) return ' — matches'
+                          return ` — off by $${diff.toFixed(2)}`
+                        })()}
+                      </span>
+                    )}
+                  </th>
+                </tr>
+              </tfoot>
+            </table>
+
+            <button className="btn-ghost" style={{ marginTop: 8 }}
+                    onClick={() => setInvoiceData({
+                      ...invoiceData,
+                      lines: [...invoiceData.lines, { description: '', amount: 0, budgetLineId: null, confidence: null }],
+                    })}>+ Add a line</button>
+
+            <div className="modal-actions">
+              <button className="btn-ghost" onClick={() => { setInvoiceData(null); setInvoiceFile(null) }} disabled={invoiceSaving}>Cancel</button>
+              <button className="btn-primary" onClick={confirmInvoice} disabled={invoiceSaving || invoiceData.lines.length === 0}>
+                {invoiceSaving ? '… saving' : `Save ${invoiceData.lines.length} expense${invoiceData.lines.length === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showQuickAdd && (
         <div className="modal-backdrop" onClick={() => !quickParsing && setShowQuickAdd(false)}>

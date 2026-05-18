@@ -72,6 +72,7 @@ builder.Services.AddHttpClient();
 builder.Services.AddSingleton<BudgetApi.Services.Receipts.TesseractOcr>();
 builder.Services.AddScoped<BudgetApi.Services.Receipts.ReceiptExtractor>();
 builder.Services.AddScoped<BudgetApi.Services.Receipts.BudgetLineSuggester>();
+builder.Services.AddScoped<BudgetApi.Services.Receipts.InvoiceLineExtractor>();
 builder.Services.AddHttpClient<Embedder>();
 builder.Services.AddScoped<ConflictDetector>();
 builder.Services.AddScoped<Scheduler>();
