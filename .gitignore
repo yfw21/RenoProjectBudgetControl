@@ -1,0 +1,25 @@
+bin/
+obj/
+*.user
+*.db
+*.db-shm
+*.db-wal
+
+node_modules/
+dist/
+.vite/
+
+BudgetApi/wwwroot/assets/
+BudgetApi/wwwroot/index.html
+BudgetApi/wwwroot/vite.svg
+
+.env
+.env.local
+
+# Real receipts/test data — kept local; may contain personal info
+test-receipts/
+
+# WSL/Windows metadata
+*:Zone.Identifier
+.devenv.sh
+*.code-workspace

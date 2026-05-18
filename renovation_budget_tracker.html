@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>House Renovation Budget & Expense Tracker</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f8f9fa;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.2em;
+            margin-bottom: 10px;
+        }
+
+        .summary-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        .card h3 {
+            color: #495057;
+            margin-bottom: 10px;
+        }
+
+        .card .amount {
+            font-size: 1.8em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .budget { color: #28a745; }
+        .spent { color: #dc3545; }
+        .remaining { color: #17a2b8; }
+        .progress { color: #6f42c1; }
+
+        .controls {
+            padding: 20px;
+            background: white;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: #007bff;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #0056b3;
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #1e7e34;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .input-group input, .input-group select {
+            padding: 8px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .table-container {
+            overflow-x: auto;
+            margin: 20px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border: 1px solid #dee2e6;
+        }
+
+        th {
+            background: #495057;
+            color: white;
+            font-weight: bold;
+            position: sticky;
+            top: 0;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+
+        tr:hover {
+            background-color: #e9ecef;
+        }
+
+        .category-total {
+            background: #e3f2fd !important;
+            font-weight: bold;
+            color: #1565c0;
+        }
+
+        .input-cell {
+            background: none;
+            border: none;
+            width: 100%;
+            padding: 4px;
+        }
+
+        .editable:focus {
+            background: #fff3cd;
+            outline: 2px solid #ffc107;
+        }
+
+        .delete-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .delete-btn:hover {
+            background: #c82333;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #28a745, #20c997);
+            transition: width 0.3s ease;
+        }
+
+        @media (max-width: 768px) {
+            .summary-cards {
+                grid-template-columns: 1fr;
+            }
+            
+            .input-group {
+                flex-direction: column;
+            }
+            
+            .btn-group {
+                flex-direction: column;
+            }
+        }
+
+        /* Modal styles */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.7);
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            min-width: 350px;
+            max-width: 90vw;
+            box-shadow: 0 2px 20px #0003;
+            position: relative;
+        }
+
+        .close-modal {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: none;
+            border: none;
+            font-size: 18px;
+            cursor: pointer;
+        }
+
+        .category-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .category-item:last-child {
+            border-bottom: none;
+        }
+
+        .category-item span {
+            flex: 1;
+        }
+
+        .edit-category {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .edit-category:hover {
+            background: #0056b3;
+        }
+
+        .delete-category {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .delete-category:hover {
+            background: #c82333;
+        }
+
+        /* Tabs */
+        .tab-group {
+            display: flex;
+            margin: 30px 0 0 0;
+        }
+
+        .tab-group .btn {
+            flex: 1;
+            text-align: center;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Gantt Chart */
+        #ganttChartContainer {
+            width: 100%;
+            min-height: 400px;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px #0001;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏠 House Renovation Budget Tracker</h1>
+            <p>Plan, track, and manage your renovation expenses</p>
+        </div>
+
+        <div class="summary-cards">
+            <div class="card">
+                <h3>Total Budget</h3>
+                <div class="amount budget" id="totalBudget">$0</div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="budgetProgress" style="width: 0%"></div>
+                </div>
+            </div>
+            <div class="card">
+                <h3>Total Spent</h3>
+                <div class="amount spent" id="totalSpent">$0</div>
+            </div>
+            <div class="card">
+                <h3>Remaining Budget</h3>
+                <div class="amount remaining" id="remainingBudget">$0</div>
+            </div>
+            <div class="card">
+                <h3>Progress</h3>
+                <div class="amount progress" id="progressPercent">0%</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <div class="btn-group">
+                <button class="btn btn-success" onclick="addExpense()">Add Expense</button>
+                <button class="btn btn-primary" onclick="exportData()">Export Data</button>
+                <button class="btn btn-secondary" onclick="showCategoryManager()" style="margin-left:10px;">Manage Categories</button>
+            </div>
+            
+            <div class="input-group" id="newItemForm" style="display: none;">
+                <input type="text" id="itemDescription" placeholder="Description" style="flex: 2;">
+                <select id="itemCategory" style="flex: 1;"></select>
+                <input type="number" id="itemBudget" placeholder="Budget Amount" step="0.01">
+                <input type="number" id="itemActual" placeholder="Actual Cost" step="0.01">
+                <input type="date" id="itemDate">
+                <input type="text" id="itemVendor" placeholder="Vendor/Store">
+                <button class="btn btn-success" onclick="saveNewItem()">Save</button>
+                <button class="btn" onclick="cancelNewItem()" style="background: #6c757d; color: white;">Cancel</button>
+            </div>
+        </div>
+
+        <div class="tab-group">
+            <button class="btn btn-secondary" id="tabBudget" onclick="showTab('budget')">Budget</button>
+            <button class="btn btn-secondary" id="tabActivities" onclick="showTab('activities')">Category Activities</button>
+        </div>
+        <div id="budgetTab" style="display:block;">
+            <div class="table-container">
+                <table id="budgetTable">
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Description</th>
+                            <th>Budgeted Amount</th>
+                            <th>Actual Cost</th>
+                            <th>Difference</th>
+                            <th>Date</th>
+                            <th>Vendor/Store</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="budgetTableBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div id="activitiesTab" style="display:none;">
+            <div style="margin:20px 0;">
+                <select id="activityCategorySelect" style="margin-right:10px;"></select>
+                <button class="btn btn-success" onclick="showAddActivityModal()">Add Activity</button>
+            </div>
+            <div id="ganttChartContainer" style="width:100%; min-height:400px; background:#fff; border-radius:10px; box-shadow:0 2px 10px #0001; padding:20px;"></div>
+        </div>
+    </div>
+
+    <div id="categoryManagerModal" class="modal">
+        <div class="modal-content">
+            <button class="close-modal" onclick="closeCategoryManager()">×</button>
+            <h2>Manage Categories</h2>
+            <div style="max-height: 400px; overflow-y: auto;">
+                <div id="categoryList"></div>
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <input type="text" id="newCategoryValue" placeholder="Category Value" style="flex: 1;">
+                <input type="text" id="newCategoryDescription" placeholder="Category Description" style="flex: 1;">
+            </div>
+            <div class="btn-group" style="margin-top: 10px;">
+                <button class="btn btn-success" onclick="addCategoryFromModal()">Add Category</button>
+                <button class="btn" onclick="closeCategoryManager()" style="background:#6c757d; color:white;">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="addActivityModal" class="modal">
+        <div class="modal-content">
+            <button class="close-modal" onclick="closeAddActivityModal()">×</button>
+            <h2>Add Activity</h2>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <input type="text" id="activityName" placeholder="Activity Name">
+                <input type="number" id="activityHours" placeholder="Work Hours">
+                <input type="date" id="activityStart" placeholder="Start Date">
+                <input type="date" id="activityEnd" placeholder="End Date">
+            </div>
+            <div class="btn-group" style="margin-top:10px;">
+                <button class="btn btn-success" onclick="addActivity()">Add</button>
+                <button class="btn" onclick="closeAddActivityModal()" style="background:#6c757d; color:white;">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let budgetData = [];
+        const apiBase = "http://localhost:5000/api/BudgetItems";
+        const categoryApi = "http://localhost:5000/api/Categories";
+        let categories = [];
+
+        let currentMode = 'budget';
+
+        function updateSummary() {
+            const totalBudget = budgetData.reduce((sum, item) => sum + (item.budget || 0), 0);
+            const totalSpent = budgetData.reduce((sum, item) => sum + (item.actual || 0), 0);
+            const remaining = totalBudget - totalSpent;
+            const progress = totalBudget > 0 ? Math.round((totalSpent / totalBudget) * 100) : 0;
+
+            document.getElementById('totalBudget').textContent = `$${totalBudget.toLocaleString()}`;
+            document.getElementById('totalSpent').textContent = `$${totalSpent.toLocaleString()}`;
+            document.getElementById('remainingBudget').textContent = `$${remaining.toLocaleString()}`;
+            document.getElementById('progressPercent').textContent = `${progress}%`;
+            
+            const progressBar = document.getElementById('budgetProgress');
+            progressBar.style.width = `${Math.min(progress, 100)}%`;
+            
+            if (progress > 100) {
+                progressBar.style.background = 'linear-gradient(90deg, #dc3545, #c82333)';
+            } else {
+                progressBar.style.background = 'linear-gradient(90deg, #28a745, #20c997)';
+            }
+        }
+
+        async function renderTable() {
+            const tbody = document.getElementById('budgetTableBody');
+            tbody.innerHTML = '';
+            // Group by category
+            const categories = {};
+            budgetData.forEach(item => {
+                if (!categories[item.category]) {
+                    categories[item.category] = [];
+                }
+                categories[item.category].push(item);
+            });
+            Object.keys(categories).forEach(category => {
+                const items = categories[category];
+                const categoryTotal = items.reduce((sum, item) => sum + (item.budget || 0), 0);
+                const categorySpent = items.reduce((sum, item) => sum + (item.actual || 0), 0);
+                // Category header
+                const categoryRow = tbody.insertRow();
+                categoryRow.className = 'category-total';
+                categoryRow.innerHTML = `
+                    <td colspan="2"><strong>${category} Total</strong></td>
+                    <td><strong>$${categoryTotal.toLocaleString()}</strong></td>
+                    <td><strong>$${categorySpent.toLocaleString()}</strong></td>
+                    <td><strong>$${(categoryTotal - categorySpent).toLocaleString()}</strong></td>
+                    <td colspan="4"></td>
+                `;
+                // Category items
+                items.forEach((item) => {
+                    const row = tbody.insertRow();
+                    const difference = (item.budget || 0) - (item.actual || 0);
+                    const diffClass = difference < 0 ? 'spent' : difference > 0 ? 'remaining' : '';
+                    row.innerHTML = `
+                        <td>${item.category}</td>
+                        <td contenteditable="true" class="editable" onblur="updateItemApi(${item.id}, 'description', this.textContent)">${item.description}</td>
+                        <td contenteditable="true" class="editable" onblur="updateItemApi(${item.id}, 'budget', parseFloat(this.textContent) || 0)">$${(item.budget || 0).toLocaleString()}</td>
+                        <td contenteditable="true" class="editable" onblur="updateItemApi(${item.id}, 'actual', parseFloat(this.textContent) || 0)">$${(item.actual || 0).toLocaleString()}</td>
+                        <td class="${diffClass}">$${difference.toLocaleString()}</td>
+                        <td contenteditable="true" class="editable" onblur="updateItemApi(${item.id}, 'date', this.textContent)">${item.date || ''}</td>
+                        <td contenteditable="true" class="editable" onblur="updateItemApi(${item.id}, 'vendor', this.textContent)">${item.vendor || ''}</td>
+                        <td>
+                            <select onchange="updateItemApi(${item.id}, 'status', this.value)">
+                                <option value="Planned" ${item.status === 'Planned' ? 'selected' : ''}>Planned</option>
+                                <option value="In Progress" ${item.status === 'In Progress' ? 'selected' : ''}>In Progress</option>
+                                <option value="Completed" ${item.status === 'Completed' ? 'selected' : ''}>Completed</option>
+                                <option value="On Hold" ${item.status === 'On Hold' ? 'selected' : ''}>On Hold</option>
+                            </select>
+                        </td>
+                        <td><button class="delete-btn" onclick="deleteItemApi(${item.id})">Delete</button></td>
+                    `;
+                });
+            });
+            updateSummary();
+        }
+
+        async function updateItemApi(id, field, value) {
+            const item = budgetData.find(x => x.id === id);
+            if (!item) return;
+            const updated = { ...item, [field]: (field === 'budget' || field === 'actual') ? (parseFloat(value) || 0) : value };
+            try {
+                await fetch(`${apiBase}/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updated)
+                });
+                await fetchBudgetData();
+            } catch (e) {
+                alert('Failed to update item.');
+            }
+        }
+
+        async function deleteItemApi(id) {
+            if (confirm('Are you sure you want to delete this item?')) {
+                try {
+                    await fetch(`${apiBase}/${id}`, { method: 'DELETE' });
+                    await fetchBudgetData();
+                } catch (e) {
+                    alert('Failed to delete item.');
+                }
+            }
+        }
+
+        function addBudgetItem() {
+            currentMode = 'budget';
+            showNewItemForm();
+        }
+
+        function addExpense() {
+            currentMode = 'expense';
+            showNewItemForm();
+        }
+
+        async function showNewItemForm() {
+            await fetchCategories();
+            renderCategorySelect();
+            document.getElementById('newItemForm').style.display = 'flex';
+            document.getElementById('itemCategory').style.display = 'inline-block';
+            document.getElementById('itemDescription').focus();
+        }
+
+        function cancelNewItem() {
+            document.getElementById('newItemForm').style.display = 'none';
+            clearForm();
+        }
+
+        async function saveNewItem() {
+            const description = document.getElementById('itemDescription').value;
+            const category = document.getElementById('itemCategory').value;
+            const budget = parseFloat(document.getElementById('itemBudget').value) || 0;
+            const actual = parseFloat(document.getElementById('itemActual').value) || 0;
+            const date = document.getElementById('itemDate').value;
+            const vendor = document.getElementById('itemVendor').value;
+            if (!description) {
+                alert('Please enter a description');
+                return;
+            }
+            if (!category) {
+                alert('Please select a category');
+                return;
+            }
+            const newItem = {
+                category: category,
+                description: description,
+                budget: budget,
+                actual: actual,
+                date: date,
+                vendor: vendor,
+                status: actual > 0 ? 'Completed' : 'Planned'
+            };
+            try {
+                const response = await fetch(apiBase, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(newItem)
+                });
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    alert('Failed to add item. ' + errorText);
+                    return;
+                }
+                await fetchBudgetData();
+                cancelNewItem();
+            } catch (e) {
+                alert('Failed to add item.');
+            }
+        }
+        async function fetchCategories() {
+            try {
+                const res = await fetch(categoryApi);
+                categories = await res.json();
+            } catch (e) {
+                categories = [];
+            }
+        }
+
+        function renderCategorySelect() {
+            const select = document.getElementById('itemCategory');
+            select.innerHTML = '';
+            if (!categories || categories.length === 0) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = 'No categories available';
+                select.appendChild(option);
+                select.disabled = true;
+            } else {
+                select.disabled = false;
+                categories.forEach(cat => {
+                    const option = document.createElement('option');
+                    option.value = cat.value;
+                    option.textContent = cat.description;
+                    select.appendChild(option);
+                });
+            }
+        }
+
+        function showCategoryManager() {
+            fetchCategories().then(() => {
+                renderCategoryManager();
+                document.getElementById('categoryManagerModal').style.display = 'flex';
+            });
+        }
+        function closeCategoryManager() {
+            document.getElementById('categoryManagerModal').style.display = 'none';
+        }
+        function renderCategoryManager() {
+            const list = document.getElementById('categoryList');
+            list.innerHTML = '';
+            categories.forEach(cat => {
+                const li = document.createElement('li');
+                li.style.display = 'flex';
+                li.style.alignItems = 'center';
+                li.style.marginBottom = '6px';
+                li.innerHTML = `
+                    <span style="flex:1;">${cat.value} <span style='color:#888;'>(${cat.description})</span></span>
+                    <button class='btn btn-danger' style='margin-left:8px;' onclick='deleteCategoryFromModal(${cat.id})'>Delete</button>
+                `;
+                list.appendChild(li);
+            });
+        }
+        async function addCategoryFromModal() {
+            const value = document.getElementById('newCategoryValue').value.trim();
+            const description = document.getElementById('newCategoryDescription').value.trim();
+            if (!value || !description) { alert('Both fields required'); return; }
+            await fetch(categoryApi, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ value, description })
+            });
+            document.getElementById('newCategoryValue').value = '';
+            document.getElementById('newCategoryDescription').value = '';
+            await fetchCategories();
+            renderCategoryManager();
+            renderCategorySelect();
+        }
+        async function deleteCategoryFromModal(id) {
+            if (!confirm('Delete this category?')) return;
+            await fetch(`${categoryApi}/${id}`, { method: 'DELETE' });
+            await fetchCategories();
+            renderCategoryManager();
+            renderCategorySelect();
+        }
+        async function fetchBudgetData() {
+            try {
+                const res = await fetch(apiBase);
+                budgetData = await res.json();
+                renderTable();
+            } catch (e) {
+                budgetData = [];
+                renderTable();
+            }
+        }
+
+        let activities = [];
+        const activityApi = "http://localhost:5000/api/CategoryActivities";
+
+        function showTab(tab) {
+            document.getElementById('budgetTab').style.display = tab === 'budget' ? 'block' : 'none';
+            document.getElementById('activitiesTab').style.display = tab === 'activities' ? 'block' : 'none';
+            document.getElementById('tabBudget').classList.toggle('btn-primary', tab === 'budget');
+            document.getElementById('tabActivities').classList.toggle('btn-primary', tab === 'activities');
+            if (tab === 'activities') {
+                renderActivityCategorySelect();
+                fetchActivities();
+            }
+        }
+
+        function renderActivityCategorySelect() {
+            const select = document.getElementById('activityCategorySelect');
+            select.innerHTML = '';
+            categories.forEach(cat => {
+                const option = document.createElement('option');
+                option.value = cat.value;
+                option.textContent = cat.description;
+                select.appendChild(option);
+            });
+        }
+
+        function showAddActivityModal() {
+            document.getElementById('addActivityModal').style.display = 'flex';
+        }
+        function closeAddActivityModal() {
+            document.getElementById('addActivityModal').style.display = 'none';
+        }
+
+        async function addActivity() {
+            const categoryValue = document.getElementById('activityCategorySelect').value;
+            const name = document.getElementById('activityName').value.trim();
+            const workHours = parseInt(document.getElementById('activityHours').value) || 0;
+            const startDate = document.getElementById('activityStart').value;
+            const endDate = document.getElementById('activityEnd').value;
+            if (!categoryValue || !name || !workHours || !startDate || !endDate) {
+                alert('All fields required'); return;
+            }
+            await fetch(activityApi, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ categoryValue, name, workHours, startDate, endDate })
+            });
+            closeAddActivityModal();
+            await fetchActivities();
+        }
+
+        async function fetchActivities() {
+            const categoryValue = document.getElementById('activityCategorySelect').value;
+            if (!categoryValue) return;
+            const res = await fetch(`${activityApi}/byCategory/${categoryValue}`);
+            activities = await res.json();
+            renderGanttChart();
+        }
+
+        function renderGanttChart() {
+            const container = document.getElementById('ganttChartContainer');
+            container.innerHTML = '';
+            if (!activities.length) {
+                container.innerHTML = '<p>No activities scheduled for this category.</p>';
+                return;
+            }
+            // Simple Gantt chart rendering (text-based, for now)
+            let html = '<table style="width:100%; border-collapse:collapse;">';
+            html += '<tr><th>Activity</th><th>Work Hours</th><th>Start</th><th>End</th></tr>';
+            activities.forEach(act => {
+                html += `<tr><td>${act.name}</td><td>${act.workHours}</td><td>${act.startDate}</td><td>${act.endDate}</td></tr>`;
+            });
+            html += '</table>';
+            container.innerHTML = html;
+        }
+
+        document.getElementById('activityCategorySelect').addEventListener('change', fetchActivities);
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            await fetchCategories();
+            renderCategorySelect();
+            fetchBudgetData();
+        });
+    </script>
+</body>
+</html>

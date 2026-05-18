@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amharic Alphabet Snake Game - Learn Fidel!</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            color: white;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            background: linear-gradient(45deg, #f39c12, #e74c3c);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            font-size: 1.2rem;
+            color: #94a3b8;
+            margin-bottom: 20px;
+        }
+
+        .game-container {
+            display: flex;
+            gap: 30px;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .game-panel {
+            background: rgba(255,255,255,0.1);
+            border-radius: 20px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        #gameCanvas {
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+
+        .info-panel {
+            min-width: 250px;
+        }
+
+        .score-board {
+            background: rgba(0,0,0,0.3);
+            padding: 15px 25px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .score-board h2 {
+            font-size: 1rem;
+            color: #94a3b8;
+            margin-bottom: 5px;
+        }
+
+        .score-value {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #4ade80;
+        }
+
+        .next-letter {
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            padding: 20px;
+            border-radius: 15px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .next-letter h3 {
+            font-size: 0.9rem;
+            color: rgba(255,255,255,0.8);
+            margin-bottom: 10px;
+        }
+
+        .next-letter-display {
+            font-size: 4rem;
+            font-weight: bold;
+            text-shadow: 2px 2px 8px rgba(0,0,0,0.3);
+        }
+
+        .next-letter-name {
+            font-size: 1rem;
+            color: rgba(255,255,255,0.9);
+            margin-top: 5px;
+        }
+
+        .alphabet-progress {
+            background: rgba(0,0,0,0.3);
+            padding: 15px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+        }
+
+        .alphabet-progress h3 {
+            font-size: 0.9rem;
+            color: #94a3b8;
+            margin-bottom: 10px;
+        }
+
+        .progress-letters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            font-size: 1.2rem;
+        }
+
+        .progress-letter {
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 5px;
+            background: rgba(255,255,255,0.1);
+            transition: all 0.3s;
+        }
+
+        .progress-letter.collected {
+            background: #4ade80;
+            color: #000;
+        }
+
+        .progress-letter.current {
+            background: #f59e0b;
+            color: #000;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+
+        .controls {
+            background: rgba(0,0,0,0.3);
+            padding: 15px;
+            border-radius: 15px;
+        }
+
+        .controls h3 {
+            font-size: 0.9rem;
+            color: #94a3b8;
+            margin-bottom: 10px;
+        }
+
+        .controls p {
+            font-size: 0.85rem;
+            color: rgba(255,255,255,0.7);
+            margin-bottom: 5px;
+        }
+
+        .btn {
+            padding: 12px 30px;
+            font-size: 1.1rem;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: bold;
+            margin-top: 15px;
+            width: 100%;
+        }
+
+        .btn-start {
+            background: linear-gradient(135deg, #4ade80, #22c55e);
+            color: #000;
+        }
+
+        .btn-start:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(74, 222, 128, 0.4);
+        }
+
+        .game-over-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+
+        .game-over-content {
+            background: linear-gradient(135deg, #1e293b, #334155);
+            padding: 40px;
+            border-radius: 20px;
+            text-align: center;
+            border: 2px solid #ef4444;
+            max-width: 400px;
+        }
+
+        .game-over-content h2 {
+            font-size: 2.5rem;
+            color: #ef4444;
+            margin-bottom: 20px;
+        }
+
+        .game-over-content p {
+            font-size: 1.1rem;
+            color: #94a3b8;
+            margin-bottom: 10px;
+        }
+
+        .final-score {
+            font-size: 3rem;
+            color: #4ade80;
+            font-weight: bold;
+            margin: 20px 0;
+        }
+
+        .wrong-letter {
+            font-size: 4rem;
+            margin: 10px 0;
+        }
+
+        .mobile-controls {
+            display: none;
+            margin-top: 20px;
+            gap: 10px;
+        }
+
+        .mobile-btn {
+            width: 60px;
+            height: 60px;
+            font-size: 1.5rem;
+            border: none;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.2);
+            color: white;
+            cursor: pointer;
+            touch-action: manipulation;
+        }
+
+        .mobile-btn:active {
+            background: rgba(255,255,255,0.4);
+        }
+
+        @media (max-width: 768px) {
+            .mobile-controls {
+                display: grid;
+                grid-template-columns: repeat(3, 60px);
+                grid-template-rows: repeat(2, 60px);
+            }
+            
+            .mobile-btn.up { grid-column: 2; grid-row: 1; }
+            .mobile-btn.left { grid-column: 1; grid-row: 2; }
+            .mobile-btn.down { grid-column: 2; grid-row: 2; }
+            .mobile-btn.right { grid-column: 3; grid-row: 2; }
+        }
+
+        .win-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+
+        .win-content {
+            background: linear-gradient(135deg, #1e293b, #334155);
+            padding: 40px;
+            border-radius: 20px;
+            text-align: center;
+            border: 2px solid #4ade80;
+            max-width: 400px;
+        }
+
+        .win-content h2 {
+            font-size: 2.5rem;
+            color: #4ade80;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🐍 Amharic Snake Game</h1>
+    <p class="subtitle">Learn Ge'ez/Amharic Alphabet (ፊደል) - Eat letters in order!</p>
+
+    <div class="game-container">
+        <div class="game-panel">
+            <canvas id="gameCanvas" width="500" height="500"></canvas>
+            <div class="mobile-controls">
+                <button class="mobile-btn up" onclick="changeDirection('up')">⬆️</button>
+                <button class="mobile-btn left" onclick="changeDirection('left')">⬅️</button>
+                <button class="mobile-btn down" onclick="changeDirection('down')">⬇️</button>
+                <button class="mobile-btn right" onclick="changeDirection('right')">➡️</button>
+            </div>
+        </div>
+
+        <div class="info-panel game-panel">
+            <div class="score-board">
+                <h2>Score</h2>
+                <div class="score-value" id="score">0</div>
+            </div>
+
+            <div class="next-letter">
+                <h3>🎯 Find This Letter Next:</h3>
+                <div class="next-letter-display" id="nextLetter">ሀ</div>
+                <div class="next-letter-name" id="nextLetterName">Ha</div>
+            </div>
+
+            <div class="alphabet-progress">
+                <h3>📚 Progress:</h3>
+                <div class="progress-letters" id="progressLetters"></div>
+            </div>
+
+            <div class="controls">
+                <h3>🎮 Controls:</h3>
+                <p>⬆️⬇️⬅️➡️ Arrow Keys to move</p>
+                <p>🎯 Eat letters in correct order</p>
+                <p>❌ Wrong letter = Game Over!</p>
+                <button class="btn btn-start" id="startBtn" onclick="startGame()">Start Game</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="game-over-overlay" id="gameOverOverlay">
+        <div class="game-over-content">
+            <h2>💀 Game Over!</h2>
+            <p>You ate the wrong letter!</p>
+            <p>You ate: <span class="wrong-letter" id="wrongLetter"></span></p>
+            <p>You needed: <span class="wrong-letter" id="neededLetter"></span></p>
+            <div class="final-score" id="finalScore">0</div>
+            <p>Letters learned!</p>
+            <button class="btn btn-start" onclick="startGame()">Play Again</button>
+        </div>
+    </div>
+
+    <div class="win-overlay" id="winOverlay">
+        <div class="win-content">
+            <h2>🎉 Congratulations!</h2>
+            <p>You learned all the letters!</p>
+            <div class="final-score" id="winScore">0</div>
+            <p>Amazing job!</p>
+            <button class="btn btn-start" onclick="startGame()">Play Again</button>
+        </div>
+    </div>
+
+    <script>
+        // Amharic Alphabet - First row of Fidel (ሀ ሁ ሂ... pattern for first 7 base letters)
+        // Using the base consonants for simplicity
+        const amharicAlphabet = [
+            { letter: 'ሀ', name: 'Ha', sound: 'hä' },
+            { letter: 'ለ', name: 'Le', sound: 'lä' },
+            { letter: 'ሐ', name: 'Hha', sound: 'ḥä' },
+            { letter: 'መ', name: 'Me', sound: 'mä' },
+            { letter: 'ሠ', name: 'Se', sound: 'śä' },
+            { letter: 'ረ', name: 'Re', sound: 'rä' },
+            { letter: 'ሰ', name: 'Se', sound: 'sä' },
+            { letter: 'ሸ', name: 'She', sound: 'šä' },
+            { letter: 'ቀ', name: 'Qe', sound: 'ḳä' },
+            { letter: 'በ', name: 'Be', sound: 'bä' },
+            { letter: 'ተ', name: 'Te', sound: 'tä' },
+            { letter: 'ቸ', name: 'Che', sound: 'čä' },
+            { letter: 'ኀ', name: 'Hhe', sound: 'ḫä' },
+            { letter: 'ነ', name: 'Ne', sound: 'nä' },
+            { letter: 'ኘ', name: 'Nye', sound: 'ñä' },
+            { letter: 'አ', name: 'A', sound: 'ʾä' },
+            { letter: 'ከ', name: 'Ke', sound: 'kä' },
+            { letter: 'ኸ', name: 'Khe', sound: 'ḵä' },
+            { letter: 'ወ', name: 'We', sound: 'wä' },
+            { letter: 'ዐ', name: 'Ayn', sound: 'ʿä' },
+            { letter: 'ዘ', name: 'Ze', sound: 'zä' },
+            { letter: 'ዠ', name: 'Zhe', sound: 'žä' },
+            { letter: 'የ', name: 'Ye', sound: 'yä' },
+            { letter: 'ደ', name: 'De', sound: 'dä' },
+            { letter: 'ጀ', name: 'Je', sound: 'ǧä' },
+            { letter: 'ገ', name: 'Ge', sound: 'gä' },
+            { letter: 'ጠ', name: 'Te', sound: 'ṭä' },
+            { letter: 'ጨ', name: 'Che', sound: 'č̣ä' },
+            { letter: 'ጰ', name: 'Pe', sound: 'p̣ä' },
+            { letter: 'ጸ', name: 'Tse', sound: 'ṣä' },
+            { letter: 'ፀ', name: 'Tse', sound: 'ṣ́ä' },
+            { letter: 'ፈ', name: 'Fe', sound: 'fä' },
+            { letter: 'ፐ', name: 'Pe', sound: 'pä' },
+        ];
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        const gridSize = 25;
+        const tileCount = canvas.width / gridSize;
+        
+        let snake = [];
+        let direction = { x: 1, y: 0 };
+        let nextDirection = { x: 1, y: 0 };
+        let letters = [];
+        let currentLetterIndex = 0;
+        let score = 0;
+        let gameLoop = null;
+        let gameSpeed = 150;
+        let isGameRunning = false;
+
+        function initProgressDisplay() {
+            const container = document.getElementById('progressLetters');
+            container.innerHTML = '';
+            amharicAlphabet.forEach((item, index) => {
+                const div = document.createElement('div');
+                div.className = 'progress-letter';
+                div.id = `progress-${index}`;
+                div.textContent = item.letter;
+                container.appendChild(div);
+            });
+            updateProgressDisplay();
+        }
+
+        function updateProgressDisplay() {
+            amharicAlphabet.forEach((item, index) => {
+                const div = document.getElementById(`progress-${index}`);
+                div.className = 'progress-letter';
+                if (index < currentLetterIndex) {
+                    div.classList.add('collected');
+                } else if (index === currentLetterIndex) {
+                    div.classList.add('current');
+                }
+            });
+
+            if (currentLetterIndex < amharicAlphabet.length) {
+                document.getElementById('nextLetter').textContent = amharicAlphabet[currentLetterIndex].letter;
+                document.getElementById('nextLetterName').textContent = amharicAlphabet[currentLetterIndex].name;
+            }
+        }
+
+        function spawnLetters() {
+            letters = [];
+            const lettersToShow = Math.min(5, amharicAlphabet.length - currentLetterIndex);
+            const usedPositions = new Set();
+            
+            // Add snake positions to used positions
+            snake.forEach(segment => {
+                usedPositions.add(`${segment.x},${segment.y}`);
+            });
+
+            for (let i = 0; i < lettersToShow; i++) {
+                let x, y;
+                let attempts = 0;
+                do {
+                    x = Math.floor(Math.random() * (tileCount - 2)) + 1;
+                    y = Math.floor(Math.random() * (tileCount - 2)) + 1;
+                    attempts++;
+                } while (usedPositions.has(`${x},${y}`) && attempts < 100);
+                
+                usedPositions.add(`${x},${y}`);
+                letters.push({
+                    x: x,
+                    y: y,
+                    letterIndex: currentLetterIndex + i,
+                    letter: amharicAlphabet[currentLetterIndex + i].letter
+                });
+            }
+        }
+
+        function startGame() {
+            document.getElementById('gameOverOverlay').style.display = 'none';
+            document.getElementById('winOverlay').style.display = 'none';
+            
+            snake = [
+                { x: 5, y: 10 },
+                { x: 4, y: 10 },
+                { x: 3, y: 10 }
+            ];
+            direction = { x: 1, y: 0 };
+            nextDirection = { x: 1, y: 0 };
+            currentLetterIndex = 0;
+            score = 0;
+            gameSpeed = 150;
+            
+            document.getElementById('score').textContent = score;
+            initProgressDisplay();
+            spawnLetters();
+            
+            if (gameLoop) clearInterval(gameLoop);
+            isGameRunning = true;
+            gameLoop = setInterval(gameUpdate, gameSpeed);
+            
+            document.getElementById('startBtn').textContent = 'Restart Game';
+        }
+
+        function gameUpdate() {
+            if (!isGameRunning) return;
+            
+            direction = { ...nextDirection };
+            
+            // Move snake
+            const head = { 
+                x: snake[0].x + direction.x, 
+                y: snake[0].y + direction.y 
+            };
+            
+            // Check wall collision
+            if (head.x < 0 || head.x >= tileCount || head.y < 0 || head.y >= tileCount) {
+                gameOver(null, null);
+                return;
+            }
+            
+            // Check self collision
+            for (let segment of snake) {
+                if (head.x === segment.x && head.y === segment.y) {
+                    gameOver(null, null);
+                    return;
+                }
+            }
+            
+            snake.unshift(head);
+            
+            // Check letter collision
+            let ateCorrectLetter = false;
+            for (let i = letters.length - 1; i >= 0; i--) {
+                if (head.x === letters[i].x && head.y === letters[i].y) {
+                    if (letters[i].letterIndex === currentLetterIndex) {
+                        // Correct letter!
+                        ateCorrectLetter = true;
+                        score += 10;
+                        currentLetterIndex++;
+                        document.getElementById('score').textContent = score;
+                        updateProgressDisplay();
+                        
+                        // Check win condition
+                        if (currentLetterIndex >= amharicAlphabet.length) {
+                            winGame();
+                            return;
+                        }
+                        
+                        spawnLetters();
+                        
+                        // Speed up slightly
+                        if (gameSpeed > 80) {
+                            gameSpeed -= 2;
+                            clearInterval(gameLoop);
+                            gameLoop = setInterval(gameUpdate, gameSpeed);
+                        }
+                    } else {
+                        // Wrong letter!
+                        gameOver(letters[i].letter, amharicAlphabet[currentLetterIndex].letter);
+                        return;
+                    }
+                    break;
+                }
+            }
+            
+            if (!ateCorrectLetter) {
+                snake.pop();
+            }
+            
+            draw();
+        }
+
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid
+            ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+            for (let i = 0; i <= tileCount; i++) {
+                ctx.beginPath();
+                ctx.moveTo(i * gridSize, 0);
+                ctx.lineTo(i * gridSize, canvas.height);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(0, i * gridSize);
+                ctx.lineTo(canvas.width, i * gridSize);
+                ctx.stroke();
+            }
+            
+            // Draw letters
+            letters.forEach(letterObj => {
+                const isNext = letterObj.letterIndex === currentLetterIndex;
+                
+                // Background circle
+                ctx.beginPath();
+                ctx.arc(
+                    letterObj.x * gridSize + gridSize / 2,
+                    letterObj.y * gridSize + gridSize / 2,
+                    gridSize / 2 - 2,
+                    0,
+                    Math.PI * 2
+                );
+                ctx.fillStyle = isNext ? '#4ade80' : '#64748b';
+                ctx.fill();
+                
+                // Letter
+                ctx.fillStyle = isNext ? '#000' : '#fff';
+                ctx.font = 'bold 18px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(
+                    letterObj.letter,
+                    letterObj.x * gridSize + gridSize / 2,
+                    letterObj.y * gridSize + gridSize / 2 + 2
+                );
+            });
+            
+            // Draw snake
+            snake.forEach((segment, index) => {
+                const isHead = index === 0;
+                
+                // Gradient from head to tail
+                const gradient = ctx.createRadialGradient(
+                    segment.x * gridSize + gridSize / 2,
+                    segment.y * gridSize + gridSize / 2,
+                    0,
+                    segment.x * gridSize + gridSize / 2,
+                    segment.y * gridSize + gridSize / 2,
+                    gridSize / 2
+                );
+                
+                if (isHead) {
+                    gradient.addColorStop(0, '#fbbf24');
+                    gradient.addColorStop(1, '#f59e0b');
+                } else {
+                    gradient.addColorStop(0, '#3b82f6');
+                    gradient.addColorStop(1, '#1d4ed8');
+                }
+                
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.roundRect(
+                    segment.x * gridSize + 1,
+                    segment.y * gridSize + 1,
+                    gridSize - 2,
+                    gridSize - 2,
+                    5
+                );
+                ctx.fill();
+                
+                // Eyes for head
+                if (isHead) {
+                    ctx.fillStyle = '#000';
+                    const eyeOffset = gridSize / 4;
+                    const eyeSize = 3;
+                    
+                    if (direction.x === 1) {
+                        ctx.beginPath();
+                        ctx.arc(segment.x * gridSize + gridSize - 6, segment.y * gridSize + eyeOffset + 2, eyeSize, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.arc(segment.x * gridSize + gridSize - 6, segment.y * gridSize + gridSize - eyeOffset - 2, eyeSize, 0, Math.PI * 2);
+                        ctx.fill();
+                    } else if (direction.x === -1) {
+                        ctx.beginPath();
+                        ctx.arc(segment.x * gridSize + 6, segment.y * gridSize + eyeOffset + 2, eyeSize, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.arc(segment.x * gridSize + 6, segment.y * gridSize + gridSize - eyeOffset - 2, eyeSize, 0, Math.PI * 2);
+                        ctx.fill();
+                    } else if (direction.y === 1) {
+                        ctx.beginPath();
+                        ctx.arc(segment.x * gridSize + eyeOffset + 2, segment.y * gridSize + gridSize - 6, eyeSize, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.arc(segment.x * gridSize + gridSize - eyeOffset - 2, segment.y * gridSize + gridSize - 6, eyeSize, 0, Math.PI * 2);
+                        ctx.fill();
+                    } else {
+                        ctx.beginPath();
+                        ctx.arc(segment.x * gridSize + eyeOffset + 2, segment.y * gridSize + 6, eyeSize, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.arc(segment.x * gridSize + gridSize - eyeOffset - 2, segment.y * gridSize + 6, eyeSize, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            });
+        }
+
+        function gameOver(wrongLetter, neededLetter) {
+            isGameRunning = false;
+            clearInterval(gameLoop);
+            
+            if (wrongLetter) {
+                document.getElementById('wrongLetter').textContent = wrongLetter;
+                document.getElementById('neededLetter').textContent = neededLetter;
+                document.querySelector('.game-over-content p:nth-child(2)').style.display = 'block';
+                document.querySelector('.game-over-content p:nth-child(3)').style.display = 'block';
+                document.querySelector('.game-over-content p:nth-child(4)').style.display = 'block';
+            } else {
+                document.querySelector('.game-over-content p:nth-child(2)').textContent = 'You hit a wall or yourself!';
+                document.querySelector('.game-over-content p:nth-child(3)').style.display = 'none';
+                document.querySelector('.game-over-content p:nth-child(4)').style.display = 'none';
+            }
+            
+            document.getElementById('finalScore').textContent = score;
+            document.getElementById('gameOverOverlay').style.display = 'flex';
+        }
+
+        function winGame() {
+            isGameRunning = false;
+            clearInterval(gameLoop);
+            document.getElementById('winScore').textContent = score;
+            document.getElementById('winOverlay').style.display = 'flex';
+        }
+
+        function changeDirection(dir) {
+            switch(dir) {
+                case 'up':
+                    if (direction.y !== 1) nextDirection = { x: 0, y: -1 };
+                    break;
+                case 'down':
+                    if (direction.y !== -1) nextDirection = { x: 0, y: 1 };
+                    break;
+                case 'left':
+                    if (direction.x !== 1) nextDirection = { x: -1, y: 0 };
+                    break;
+                case 'right':
+                    if (direction.x !== -1) nextDirection = { x: 1, y: 0 };
+                    break;
+            }
+        }
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            switch(e.key) {
+                case 'ArrowUp':
+                    e.preventDefault();
+                    changeDirection('up');
+                    break;
+                case 'ArrowDown':
+                    e.preventDefault();
+                    changeDirection('down');
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    changeDirection('left');
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    changeDirection('right');
+                    break;
+            }
+        });
+
+        // Initial draw
+        initProgressDisplay();
+        draw();
+    </script>
+</body>
+</html>
