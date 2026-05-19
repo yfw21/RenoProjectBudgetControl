@@ -44,6 +44,10 @@ export function Expenses() {
   const [invoiceData, setInvoiceData] = useState<InvoiceReview | null>(null)
   const [invoiceSaving, setInvoiceSaving] = useState(false)
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null)
+  const [invoiceMatching, setInvoiceMatching] = useState(false)
+  const invoiceSeqRef = useRef(0)
+  // tracks which line indices the user has manually edited — don't overwrite when matcher returns
+  const invoiceUserPickedRef = useRef<Set<number>>(new Set())
   const [rawText, setRawText] = useState<string | null>(null)
   const [showRaw, setShowRaw] = useState(false)
   const [parsing, setParsing] = useState(false)
@@ -179,25 +183,59 @@ export function Expenses() {
       const r = await fetch('/api/expenses/parse-invoice', { method: 'POST', credentials: 'include', body: fd })
       const data = await r.json()
       if (!r.ok) { alert(`Invoice parse failed: ${data.error || r.statusText}`); return }
+      const lines = (data.lines || []).map((l: any) => ({
+        description: l.description || '',
+        amount: l.amount ?? 0,
+        budgetLineId: null,
+        confidence: null,
+      }))
+      invoiceUserPickedRef.current = new Set()
       setInvoiceData({
         vendor: data.vendor || '',
         invoiceNumber: data.invoiceNumber || '',
         invoiceDate: data.invoiceDate || today(),
         total: typeof data.total === 'number' ? data.total : null,
         note: data.note || null,
-        lines: (data.lines || []).map((l: any) => ({
-          description: l.description || '',
-          amount: l.amount ?? 0,
-          budgetLineId: l.suggestedBudgetLineId ?? null,
-          confidence: l.suggestedConfidence ?? null,
-        })),
+        lines,
       })
+      // Kick off matching asynchronously — dropdowns will fill in as it returns.
+      requestInvoiceMatches(lines, data.vendor || null)
     } catch (e: any) {
       alert(`Invoice parse failed: ${e.message}`)
     } finally {
       setInvoiceParsing(false)
       if (invoiceInputRef.current) invoiceInputRef.current.value = ''
     }
+  }
+
+  async function requestInvoiceMatches(lines: InvoiceReviewLine[], vendor: string | null) {
+    if (!current || lines.length === 0) return
+    const seq = ++invoiceSeqRef.current
+    setInvoiceMatching(true)
+    try {
+      const r = await fetch('/api/expenses/suggest-lines-batch', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: current.id,
+          items: lines.map(l => ({ description: l.description, vendor })),
+        }),
+      })
+      if (!r.ok) return
+      const data = await r.json()
+      if (seq !== invoiceSeqRef.current) return // stale — modal was reset
+      setInvoiceData(d => {
+        if (!d) return d
+        const next = d.lines.map((l, i) => {
+          if (invoiceUserPickedRef.current.has(i)) return l
+          const m = (data.matches || []).find((x: any) => x.itemIndex === i)
+          if (!m || m.budgetLineId == null) return l
+          return { ...l, budgetLineId: m.budgetLineId, confidence: m.confidence }
+        })
+        return { ...d, lines: next }
+      })
+    } catch { /* silent — user can still pick manually */ }
+    finally { if (seq === invoiceSeqRef.current) setInvoiceMatching(false) }
   }
 
   async function confirmInvoice() {
@@ -538,6 +576,7 @@ export function Expenses() {
             <p className="muted" style={{ fontSize: 13, marginTop: 16, marginBottom: 6 }}>
               {invoiceData.lines.length} line item{invoiceData.lines.length === 1 ? '' : 's'} extracted —
               edit, change the budget line, or remove rows before saving.
+              {invoiceMatching && <> · <span style={{ color: 'var(--accent)' }}>✦ AI matching budget lines… you can pick manually meanwhile.</span></>}
             </p>
 
             <table className="data" style={{ marginTop: 0 }}>
@@ -573,6 +612,7 @@ export function Expenses() {
                       <select style={{ width: '100%' }} value={l.budgetLineId ?? ''}
                               onChange={ev => {
                                 const v = ev.target.value
+                                invoiceUserPickedRef.current.add(i)
                                 const next = [...invoiceData.lines]
                                 next[i] = { ...l, budgetLineId: v === '' ? null : parseInt(v, 10), confidence: null }
                                 setInvoiceData({ ...invoiceData, lines: next })

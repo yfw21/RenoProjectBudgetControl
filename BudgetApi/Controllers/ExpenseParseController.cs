@@ -46,22 +46,15 @@ public class ExpenseParseController : ControllerBase
         if (file == null || file.Length == 0) return BadRequest(new { error = "file required" });
         var invoice = await invoiceExtractor.ExtractAsync(file, ct);
 
-        // Run line-by-line suggestion serially. Concurrent ollama calls would share the same
-        // model slot and serialize anyway; serial keeps the model warm.
-        var lines = new List<object>();
-        foreach (var l in invoice.Lines)
+        // Suggestion is run separately via /suggest-lines-batch so the modal can open
+        // as soon as lines are extracted; dropdowns fill in afterwards.
+        var lines = invoice.Lines.Select(l => (object)new
         {
-            var suggestion = await _suggester.SuggestAsync(projectId, l.Description, invoice.Vendor, null, ct);
-            lines.Add(new
-            {
-                description = l.Description,
-                quantity = l.Quantity,
-                unitPrice = l.UnitPrice,
-                amount = l.Amount,
-                suggestedBudgetLineId = suggestion?.LineId,
-                suggestedConfidence = suggestion?.Confidence
-            });
-        }
+            description = l.Description,
+            quantity = l.Quantity,
+            unitPrice = l.UnitPrice,
+            amount = l.Amount
+        }).ToList();
 
         return Ok(new
         {
@@ -73,6 +66,29 @@ public class ExpenseParseController : ControllerBase
             rawText = invoice.RawText,
             source = invoice.Source,
             note = invoice.Note
+        });
+    }
+
+    public record SuggestBatchItem(string Description, string? Vendor);
+    public record SuggestBatchRequest(int ProjectId, List<SuggestBatchItem> Items);
+
+    [HttpPost("suggest-lines-batch")]
+    public async Task<IActionResult> SuggestLinesBatch([FromBody] SuggestBatchRequest req, CancellationToken ct)
+    {
+        if (req?.Items == null || req.Items.Count == 0)
+            return Ok(new { matches = Array.Empty<object>() });
+        var inputs = req.Items
+            .Select(it => new BudgetLineSuggester.BatchInput(it.Description ?? "", it.Vendor))
+            .ToList();
+        var results = await _suggester.SuggestBatchAsync(req.ProjectId, inputs, ct);
+        return Ok(new
+        {
+            matches = results.Select(r => new
+            {
+                itemIndex = r.ItemIndex,
+                budgetLineId = r.LineId,
+                confidence = r.Confidence
+            })
         });
     }
 

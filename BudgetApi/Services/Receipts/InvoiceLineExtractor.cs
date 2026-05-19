@@ -34,14 +34,22 @@ public class InvoiceLineExtractor
 
     public async Task<ExtractedInvoice> ExtractAsync(IFormFile file, CancellationToken ct)
     {
+        var swText = System.Diagnostics.Stopwatch.StartNew();
         var (text, source, note) = await GetTextAsync(file, ct);
+        swText.Stop();
+        _log.LogInformation("InvoiceExtract timing: text extraction ({Source}) = {Ms}ms, {Chars} chars",
+            source, swText.ElapsedMilliseconds, text?.Length ?? 0);
         if (string.IsNullOrWhiteSpace(text))
             return new ExtractedInvoice(null, null, null, null, new(), null, source,
                 note ?? "Could not extract text from the invoice.");
 
         try
         {
+            var swLlm = System.Diagnostics.Stopwatch.StartNew();
             var dto = await OllamaExtract(text, ct);
+            swLlm.Stop();
+            _log.LogInformation("InvoiceExtract timing: LLM line extraction = {Ms}ms",
+                swLlm.ElapsedMilliseconds);
             if (dto is null)
                 return new ExtractedInvoice(null, null, null, null, new(), TrimRaw(text), source,
                     "LLM did not return structured data.");
@@ -130,7 +138,11 @@ public class InvoiceLineExtractor
             model,
             stream = false,
             format = "json",
-            options = new { temperature = 0.1, num_predict = 1500 },
+            // ~30-50 tokens per line item × ~20-line ceiling + header fields ≈ 800 tokens.
+            // Was 1500 — most invoices stop well before that, but the cap kept the worst
+            // case open. 800 should fit typical invoices and prevents the model from
+            // running on for minutes if it loses the stop pattern.
+            options = new { temperature = 0.1, num_predict = 800 },
             messages = new[] {
                 new { role = "system", content = SystemPrompt },
                 new { role = "user", content = $"--- Invoice text ---\n{text}\n--- End ---" }
