@@ -9,6 +9,11 @@ node_modules/
 dist/
 .vite/
 
+# Playwright artifacts (kept locally)
+web/test-results/
+web/playwright-report/
+web/tests/_screenshots/
+
 BudgetApi/wwwroot/assets/
 BudgetApi/wwwroot/index.html
 BudgetApi/wwwroot/vite.svg
