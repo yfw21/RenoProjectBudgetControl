@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { get, post, del } from '../api'
 import { useProjects } from '../state/ProjectContext'
 import { ImageLightbox } from '../components/ImageLightbox'
@@ -366,6 +366,16 @@ export function Expenses() {
     }
   }
 
+  // Categories that the user can pick from in the dropdown — sourced from the project's
+  // budget sections + any category already used on a prior expense. Free-text typing is
+  // still allowed via the datalist pattern.
+  const categoryOptions = useMemo(() => {
+    const set = new Set<string>()
+    budgetLines.forEach(l => l.category && set.add(l.category))
+    expenses.forEach(e => e.category && set.add(e.category))
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [budgetLines, expenses])
+
   if (!current) return <div className="page"><h1>Expenses</h1><p className="muted">Select a project first.</p></div>
 
   const total = expenses.reduce((s, e) => s + (e.actual ?? 0), 0)
@@ -461,98 +471,111 @@ export function Expenses() {
       </table>
 
       {showForm && (
-        <div className="modal-backdrop" onClick={() => !busy && setShowForm(false)}>
-          <div className="modal" onClick={ev => ev.stopPropagation()}>
-            <h2>{receiptFile ? 'Confirm expense' : 'Add expense'}</h2>
-
-            {missing.length > 0 && (
-              <div className="banner-warn">
-                Couldn't read {missing.join(', ')} from the receipt. Please fill them in.
-              </div>
-            )}
-            {parseNote && (
-              <div className="banner-info">{parseNote}</div>
-            )}
-            {receiptFile && missing.length === 0 && (
-              <div className="banner-ok">Fields extracted from {receiptFile.name}. Review and confirm.</div>
-            )}
-
-            <label>Description {isMissing('description') && <span className="req">required</span>}
-              <input className={cls('description')} value={draft.description}
-                     onChange={ev => setDraft({ ...draft, description: ev.target.value })} autoFocus />
-            </label>
-            <label>Category
-              <input value={draft.category} onChange={ev => setDraft({ ...draft, category: ev.target.value })} />
-            </label>
-            <label>Budget line
-              <BudgetLineCombobox
-                value={draft.budgetLineId}
-                lines={budgetLines}
-                suggestedId={lineSuggestionSource === 'server' ? draft.budgetLineId : null}
-                suggestedLabel={lineSuggestionSource === 'server' ? '✦ AI match' : null}
-                onChange={id => {
-                  userPickedLineRef.current = true
-                  setDraft({ ...draft, budgetLineId: id })
-                  setLineSuggestionSource(null)
-                }}
-              />
-              {suggestingLine && (
-                <span className="muted" style={{ fontSize: 11 }}>✦ AI is suggesting a match… (you can pick now to skip)</span>
+        <div className="modal-backdrop">
+          <div className="modal modal-large" style={{ maxWidth: 600 }} onClick={ev => ev.stopPropagation()}>
+            <div className="modal-head">
+              <h2>{receiptFile ? 'Confirm expense' : 'Add expense'}</h2>
+            </div>
+            <div className="modal-body">
+              {missing.length > 0 && (
+                <div className="banner-warn">
+                  Couldn't read {missing.join(', ')} from the receipt. Please fill them in.
+                </div>
               )}
-              {!suggestingLine && lineSuggestionSource && draft.budgetLineId != null && (
-                <span className="muted" style={{ fontSize: 11 }}>
-                  {lineSuggestionSource === 'server' ? '✦ Auto-matched by AI' : 'Matched by category'} — change if wrong
-                </span>
+              {parseNote && (
+                <div className="banner-info">{parseNote}</div>
               )}
-              {!suggestingLine && budgetLines.length === 0 && (
-                <span className="muted" style={{ fontSize: 11 }}>No budget lines yet — import a budget to enable auto-matching</span>
+              {receiptFile && missing.length === 0 && (
+                <div className="banner-ok">Fields extracted from {receiptFile.name}. Review and confirm.</div>
               )}
-            </label>
-            <label>Amount (USD) {isMissing('amount') && <span className="req">required</span>}
-              <input className={cls('amount')} type="number" step="0.01" value={draft.actual}
-                     onChange={ev => setDraft({ ...draft, actual: parseFloat(ev.target.value) || 0 })} />
-            </label>
-            <label>Vendor {isMissing('vendor') && <span className="req">required</span>}
-              <input className={cls('vendor')} value={draft.vendor}
-                     onChange={ev => setDraft({ ...draft, vendor: ev.target.value })} />
-            </label>
-            <label>Date
-              <input type="date" value={draft.date} onChange={ev => setDraft({ ...draft, date: ev.target.value })} />
-            </label>
 
-            {!receiptFile && (
-              <label>Receipt (optional)
-                <input type="file" accept="image/*,application/pdf"
-                       onChange={ev => setReceiptFile(ev.target.files?.[0] ?? null)} />
+              <label>Description {isMissing('description') && <span className="req">required</span>}
+                <input className={cls('description')} value={draft.description}
+                       onChange={ev => setDraft({ ...draft, description: ev.target.value })} autoFocus />
               </label>
-            )}
-            {receiptFile && (
-              <div className="muted" style={{ fontSize: 12 }}>
-                📎 {receiptFile.name} ({Math.round(receiptFile.size / 1024)} KB) will be saved as the receipt.
-              </div>
-            )}
-
-            {rawText && (
-              <div style={{ marginTop: 12 }}>
-                <button className="btn-ghost" style={{ padding: '4px 0' }} onClick={() => setShowRaw(s => !s)}>
-                  {showRaw ? '▾' : '▸'} What the parser saw
-                </button>
-                {showRaw && (
-                  <pre style={{
-                    maxHeight: 200, overflowY: 'auto',
-                    background: 'var(--bg)', border: '1px solid var(--border)',
-                    borderRadius: 6, padding: 10, fontSize: 11, lineHeight: 1.4,
-                    whiteSpace: 'pre-wrap', wordWrap: 'break-word', marginTop: 4
-                  }}>{rawText}</pre>
+              <label>Category
+                <input list="expense-category-options"
+                       value={draft.category}
+                       placeholder={categoryOptions.length > 0 ? 'Type or pick from budget categories' : 'Type a category'}
+                       onChange={ev => setDraft({ ...draft, category: ev.target.value })} />
+                <datalist id="expense-category-options">
+                  {categoryOptions.map(c => <option key={c} value={c} />)}
+                </datalist>
+              </label>
+              <label>Budget line
+                <BudgetLineCombobox
+                  value={draft.budgetLineId}
+                  lines={budgetLines}
+                  suggestedId={lineSuggestionSource === 'server' ? draft.budgetLineId : null}
+                  suggestedLabel={lineSuggestionSource === 'server' ? '✦ AI match' : null}
+                  onChange={id => {
+                    userPickedLineRef.current = true
+                    setDraft({ ...draft, budgetLineId: id })
+                    setLineSuggestionSource(null)
+                  }}
+                />
+                {suggestingLine && (
+                  <span className="muted" style={{ fontSize: 11 }}>✦ AI is suggesting a match… (you can pick now to skip)</span>
                 )}
-              </div>
-            )}
+                {!suggestingLine && lineSuggestionSource && draft.budgetLineId != null && (
+                  <span className="muted" style={{ fontSize: 11 }}>
+                    {lineSuggestionSource === 'server' ? '✦ Auto-matched by AI' : 'Matched by category'} — change if wrong
+                  </span>
+                )}
+                {!suggestingLine && budgetLines.length === 0 && (
+                  <span className="muted" style={{ fontSize: 11 }}>No budget lines yet — import a budget to enable auto-matching</span>
+                )}
+              </label>
+              <label>Amount (USD) {isMissing('amount') && <span className="req">required</span>}
+                <input className={cls('amount')} type="number" step="0.01" value={draft.actual}
+                       onChange={ev => setDraft({ ...draft, actual: parseFloat(ev.target.value) || 0 })} />
+              </label>
+              <label>Vendor {isMissing('vendor') && <span className="req">required</span>}
+                <input className={cls('vendor')} value={draft.vendor}
+                       onChange={ev => setDraft({ ...draft, vendor: ev.target.value })} />
+              </label>
+              <label>Date
+                <input type="date" value={draft.date} onChange={ev => setDraft({ ...draft, date: ev.target.value })} />
+              </label>
 
-            <div className="modal-actions">
-              <button className="btn-ghost" onClick={() => { setShowForm(false); resetForm() }} disabled={busy}>Cancel</button>
-              <button className="btn-primary" onClick={create} disabled={busy || !draft.description || !draft.actual}>
-                {busy ? '…' : (receiptFile ? 'Confirm & save' : 'Add')}
-              </button>
+              {!receiptFile && (
+                <label>Receipt (optional)
+                  <input type="file" accept="image/*,application/pdf"
+                         onChange={ev => setReceiptFile(ev.target.files?.[0] ?? null)} />
+                </label>
+              )}
+              {receiptFile && (
+                <div className="muted" style={{ fontSize: 12 }}>
+                  📎 {receiptFile.name} ({Math.round(receiptFile.size / 1024)} KB) will be saved as the receipt.
+                </div>
+              )}
+
+              {rawText && (
+                <div style={{ marginTop: 12 }}>
+                  <button className="btn-ghost" style={{ padding: '4px 0' }} onClick={() => setShowRaw(s => !s)}>
+                    {showRaw ? '▾' : '▸'} What the parser saw
+                  </button>
+                  {showRaw && (
+                    <pre style={{
+                      maxHeight: 200, overflowY: 'auto',
+                      background: 'var(--bg)', border: '1px solid var(--border)',
+                      borderRadius: 6, padding: 10, fontSize: 11, lineHeight: 1.4,
+                      whiteSpace: 'pre-wrap', wordWrap: 'break-word', marginTop: 4
+                    }}>{rawText}</pre>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="modal-foot">
+              <span className="foot-meta">
+                {draft.actual > 0 && <>Amount: <strong>${draft.actual.toFixed(2)}</strong></>}
+              </span>
+              <div className="foot-actions">
+                <button className="btn-ghost" onClick={() => { setShowForm(false); resetForm() }} disabled={busy}>Cancel</button>
+                <button className="btn-primary" onClick={create} disabled={busy || !draft.description || !draft.actual}>
+                  {busy ? '…' : (receiptFile ? 'Confirm & save' : 'Add')}
+                </button>
+              </div>
             </div>
           </div>
         </div>
