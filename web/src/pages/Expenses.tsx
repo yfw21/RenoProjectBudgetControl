@@ -575,32 +575,35 @@ export function Expenses() {
       )}
 
       {invoiceData && (
-        <div className="modal-backdrop" onClick={() => !invoiceSaving && setInvoiceData(null)}>
-          <div className="modal" style={{ maxWidth: 920 }} onClick={e => e.stopPropagation()}>
-            <h2>📋 Review invoice — {invoiceData.vendor || 'Unknown vendor'}</h2>
-            {invoiceData.note && <div className="banner-info">{invoiceData.note}</div>}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
-              <label>Vendor
-                <input value={invoiceData.vendor}
-                       onChange={ev => setInvoiceData({ ...invoiceData, vendor: ev.target.value })} />
-              </label>
-              <label>Invoice #
-                <input value={invoiceData.invoiceNumber}
-                       onChange={ev => setInvoiceData({ ...invoiceData, invoiceNumber: ev.target.value })} />
-              </label>
-              <label>Date
-                <input type="date" value={invoiceData.invoiceDate}
-                       onChange={ev => setInvoiceData({ ...invoiceData, invoiceDate: ev.target.value })} />
-              </label>
+        <div className="modal-backdrop">
+          <div className="modal modal-large" onClick={e => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2>📋 Review invoice — {invoiceData.vendor || 'Unknown vendor'}</h2>
             </div>
+            <div className="modal-body">
+              {invoiceData.note && <div className="banner-info">{invoiceData.note}</div>}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+                <label>Vendor
+                  <input value={invoiceData.vendor}
+                         onChange={ev => setInvoiceData({ ...invoiceData, vendor: ev.target.value })} />
+                </label>
+                <label>Invoice #
+                  <input value={invoiceData.invoiceNumber}
+                         onChange={ev => setInvoiceData({ ...invoiceData, invoiceNumber: ev.target.value })} />
+                </label>
+                <label>Date
+                  <input type="date" value={invoiceData.invoiceDate}
+                         onChange={ev => setInvoiceData({ ...invoiceData, invoiceDate: ev.target.value })} />
+                </label>
+              </div>
 
-            <p className="muted" style={{ fontSize: 13, marginTop: 16, marginBottom: 6 }}>
-              {invoiceData.lines.length} line item{invoiceData.lines.length === 1 ? '' : 's'} extracted —
-              edit, change the budget line, or remove rows before saving.
-              {invoiceMatching && <> · <span style={{ color: 'var(--accent)' }}>✦ AI matching budget lines… you can pick manually meanwhile.</span></>}
-            </p>
+              <p className="muted" style={{ fontSize: 13, marginTop: 16, marginBottom: 6 }}>
+                {invoiceData.lines.length} line item{invoiceData.lines.length === 1 ? '' : 's'} extracted —
+                edit, change the budget line, or remove rows before saving.
+                {invoiceMatching && <> · <span style={{ color: 'var(--accent)' }}>✦ AI matching budget lines… you can pick manually meanwhile.</span></>}
+              </p>
 
-            <table className="data" style={{ marginTop: 0 }}>
+              <table className="data" style={{ marginTop: 0 }}>
               <thead>
                 <tr>
                   <th style={{ width: '38%' }}>Description</th>
@@ -679,17 +682,23 @@ export function Expenses() {
               </tfoot>
             </table>
 
-            <button className="btn-ghost" style={{ marginTop: 8 }}
-                    onClick={() => setInvoiceData({
-                      ...invoiceData,
-                      lines: [...invoiceData.lines, { description: '', amount: 0, budgetLineId: null, confidence: null }],
-                    })}>+ Add a line</button>
-
-            <div className="modal-actions">
-              <button className="btn-ghost" onClick={() => { setInvoiceData(null); setInvoiceFile(null) }} disabled={invoiceSaving}>Cancel</button>
-              <button className="btn-primary" onClick={confirmInvoice} disabled={invoiceSaving || invoiceData.lines.length === 0}>
-                {invoiceSaving ? '… saving' : `Save ${invoiceData.lines.length} expense${invoiceData.lines.length === 1 ? '' : 's'}`}
-              </button>
+              <button className="btn-ghost" style={{ marginTop: 8 }}
+                      onClick={() => setInvoiceData({
+                        ...invoiceData,
+                        lines: [...invoiceData.lines, { description: '', amount: 0, budgetLineId: null, confidence: null }],
+                      })}>+ Add a line</button>
+            </div>
+            <div className="modal-foot">
+              <span className="foot-meta">
+                Lines total: <strong>${invoiceData.lines.reduce((s, l) => s + (l.amount || 0), 0).toFixed(2)}</strong>
+                {invoiceData.total != null && <> &nbsp;·&nbsp; Invoice total: ${invoiceData.total.toFixed(2)}</>}
+              </span>
+              <div className="foot-actions">
+                <button className="btn-ghost" onClick={() => { if (confirm('Discard this invoice without saving?')) { setInvoiceData(null); setInvoiceFile(null) } }} disabled={invoiceSaving}>Cancel</button>
+                <button className="btn-primary" onClick={confirmInvoice} disabled={invoiceSaving || invoiceData.lines.length === 0}>
+                  {invoiceSaving ? '… saving' : `Save ${invoiceData.lines.length} expense${invoiceData.lines.length === 1 ? '' : 's'}`}
+                </button>
+              </div>
             </div>
           </div>
         </div>

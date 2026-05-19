@@ -163,6 +163,43 @@ table.data tr:hover td { background: var(--panel-2); }
 .login .switch { color: var(--muted); text-align: center; font-size: 14px; cursor: pointer; }
 .login .error { color: var(--danger); font-size: 14px; }
 
+/* large modal with scrollable body — used for invoice review on small screens */
+.modal-large {
+  width: 95%;
+  max-width: 920px;
+  max-height: 92vh;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.modal-large .modal-head {
+  padding: 18px 24px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-large .modal-head h2 { margin: 0; font-size: 16px; }
+.modal-large .modal-body {
+  padding: 14px 24px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.modal-large .modal-foot {
+  padding: 12px 24px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel);
+}
+.modal-large .modal-foot .foot-meta { color: var(--muted); font-size: 12px; }
+.modal-large .modal-foot .foot-actions { display: flex; gap: 8px; }
+@media (max-width: 760px) {
+  .modal-large .modal-head, .modal-large .modal-body, .modal-large .modal-foot {
+    padding-left: 14px; padding-right: 14px;
+  }
+}
+
 /* searchable budget-line combobox */
 .combo { position: relative; }
 .combo-input-wrap { position: relative; display: flex; align-items: center; }
