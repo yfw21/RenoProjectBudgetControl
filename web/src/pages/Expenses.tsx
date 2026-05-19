@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { get, post, del } from '../api'
 import { useProjects } from '../state/ProjectContext'
 import { ImageLightbox } from '../components/ImageLightbox'
+import { BudgetLineCombobox } from '../components/BudgetLineCombobox'
 
 type Expense = {
   id: number; projectId: number; category: string; description: string;
@@ -45,6 +46,7 @@ export function Expenses() {
   const [invoiceSaving, setInvoiceSaving] = useState(false)
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null)
   const [invoiceMatching, setInvoiceMatching] = useState(false)
+  const [invoiceElapsed, setInvoiceElapsed] = useState(0)
   const invoiceSeqRef = useRef(0)
   // tracks which line indices the user has manually edited — don't overwrite when matcher returns
   const invoiceUserPickedRef = useRef<Set<number>>(new Set())
@@ -71,6 +73,14 @@ export function Expenses() {
     setBudgetLines(lines)
   }
   useEffect(() => { load() }, [current])
+
+  // Tick a 1-second timer while the invoice parse is in flight, so the loader shows progress.
+  useEffect(() => {
+    if (!invoiceParsing) { setInvoiceElapsed(0); return }
+    const start = Date.now()
+    const id = setInterval(() => setInvoiceElapsed(Math.round((Date.now() - start) / 1000)), 1000)
+    return () => clearInterval(id)
+  }, [invoiceParsing])
 
   function suggestBudgetLine(category: string): number | null {
     if (!category) return null
@@ -475,20 +485,17 @@ export function Expenses() {
               <input value={draft.category} onChange={ev => setDraft({ ...draft, category: ev.target.value })} />
             </label>
             <label>Budget line
-              <select
-                value={draft.budgetLineId ?? ''}
-                onChange={ev => {
-                  const v = ev.target.value
+              <BudgetLineCombobox
+                value={draft.budgetLineId}
+                lines={budgetLines}
+                suggestedId={lineSuggestionSource === 'server' ? draft.budgetLineId : null}
+                suggestedLabel={lineSuggestionSource === 'server' ? '✦ AI match' : null}
+                onChange={id => {
                   userPickedLineRef.current = true
-                  setDraft({ ...draft, budgetLineId: v === '' ? null : parseInt(v, 10) })
+                  setDraft({ ...draft, budgetLineId: id })
                   setLineSuggestionSource(null)
                 }}
-              >
-                <option value="">— None (uncategorized) —</option>
-                {budgetLines.map(l => (
-                  <option key={l.id} value={l.id}>{l.category} · {l.description}</option>
-                ))}
-              </select>
+              />
               {suggestingLine && (
                 <span className="muted" style={{ fontSize: 11 }}>✦ AI is suggesting a match… (you can pick now to skip)</span>
               )}
@@ -553,6 +560,20 @@ export function Expenses() {
 
       {lightbox && <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />}
 
+      {invoiceParsing && (
+        <div className="loader-backdrop">
+          <div className="loader-card">
+            <div className="loader-spinner" />
+            <h3>Reading your invoice…</h3>
+            <div className="loader-sub">
+              The LLM is extracting line items from the PDF.<br />
+              Typically <strong>2–3 minutes</strong> on local CPU.<br />
+              <span className="loader-elapsed">{formatElapsed(invoiceElapsed)}</span> elapsed
+            </div>
+          </div>
+        </div>
+      )}
+
       {invoiceData && (
         <div className="modal-backdrop" onClick={() => !invoiceSaving && setInvoiceData(null)}>
           <div className="modal" style={{ maxWidth: 920 }} onClick={e => e.stopPropagation()}>
@@ -609,24 +630,22 @@ export function Expenses() {
                              }} />
                     </td>
                     <td>
-                      <select style={{ width: '100%' }} value={l.budgetLineId ?? ''}
-                              onChange={ev => {
-                                const v = ev.target.value
-                                invoiceUserPickedRef.current.add(i)
-                                const next = [...invoiceData.lines]
-                                next[i] = { ...l, budgetLineId: v === '' ? null : parseInt(v, 10), confidence: null }
-                                setInvoiceData({ ...invoiceData, lines: next })
-                              }}>
-                        <option value="">— None —</option>
-                        {budgetLines.map(bl => (
-                          <option key={bl.id} value={bl.id}>{bl.category} · {bl.description}</option>
-                        ))}
-                      </select>
-                      {l.confidence && (
-                        <span className="muted" style={{ fontSize: 11 }}>
-                          ✦ {l.confidence === 'high' ? 'High confidence' : l.confidence === 'medium' ? 'Plausible — verify' : 'Best guess — verify'}
-                        </span>
-                      )}
+                      <BudgetLineCombobox
+                        value={l.budgetLineId}
+                        lines={budgetLines}
+                        suggestedId={l.confidence ? l.budgetLineId : null}
+                        suggestedLabel={
+                          l.confidence === 'high' ? 'High confidence'
+                          : l.confidence === 'medium' ? 'Plausible'
+                          : l.confidence === 'low' ? 'Best guess' : null
+                        }
+                        onChange={id => {
+                          invoiceUserPickedRef.current.add(i)
+                          const next = [...invoiceData.lines]
+                          next[i] = { ...l, budgetLineId: id, confidence: null }
+                          setInvoiceData({ ...invoiceData, lines: next })
+                        }}
+                      />
                     </td>
                     <td>
                       <button className="btn-ghost danger" title="Remove line"
@@ -722,3 +741,8 @@ export function Expenses() {
 }
 
 function today() { return new Date().toISOString().slice(0, 10) }
+function formatElapsed(secs: number) {
+  const m = Math.floor(secs / 60)
+  const s = secs % 60
+  return m > 0 ? `${m}m ${s.toString().padStart(2, '0')}s` : `${s}s`
+}
