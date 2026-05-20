@@ -22,6 +22,119 @@ public class ReportsController : ControllerBase
         _db = db; _cfg = cfg; _httpFactory = httpFactory; _log = log;
     }
 
+    private const string UNDATED = "undated";
+
+    /// <summary>Month key "yyyy-MM" for an expense, or "undated" when no date is set.</summary>
+    private static string MonthKey(DateTime? d) => d.HasValue ? d.Value.ToString("yyyy-MM") : UNDATED;
+
+    /// <summary>
+    /// Per budget line, spend broken into month columns. The control sheet's
+    /// "Cync payment 1..6" columns map naturally onto sequential months.
+    /// Expenses not linked to a line are grouped under an "Unassigned" row.
+    /// </summary>
+    [HttpGet("spend-by-month")]
+    public async Task<IActionResult> SpendByMonth([FromQuery] int projectId, CancellationToken ct)
+    {
+        var lines = await _db.BudgetItems
+            .Where(b => b.ProjectId == projectId && b.BudgetLineId == null && b.Budget > 0)
+            .OrderBy(b => b.Category).ThenBy(b => b.Description)
+            .Select(b => new { b.Id, b.Category, b.Description, b.Budget })
+            .ToListAsync(ct);
+
+        var expenses = await _db.BudgetItems
+            .Where(b => b.ProjectId == projectId && b.Actual > 0)
+            .Select(b => new { b.BudgetLineId, b.Actual, b.Date })
+            .ToListAsync(ct);
+
+        var months = expenses.Select(e => MonthKey(e.Date)).Distinct().OrderBy(SortKey).ToList();
+
+        var spentByLineMonth = expenses
+            .Where(e => e.BudgetLineId.HasValue)
+            .GroupBy(e => e.BudgetLineId!.Value)
+            .ToDictionary(
+                g => g.Key,
+                g => g.GroupBy(e => MonthKey(e.Date)).ToDictionary(mg => mg.Key, mg => mg.Sum(x => x.Actual)));
+
+        var rows = lines.Select(l =>
+        {
+            var byMonth = spentByLineMonth.GetValueOrDefault(l.Id, new());
+            var total = byMonth.Values.Sum();
+            return new
+            {
+                lineId = l.Id,
+                category = l.Category,
+                description = l.Description,
+                budget = l.Budget,
+                byMonth,
+                total,
+                remaining = l.Budget - total
+            };
+        }).ToList();
+
+        // Expenses with no linked budget line.
+        var unassigned = expenses.Where(e => !e.BudgetLineId.HasValue).ToList();
+        object? unassignedRow = null;
+        if (unassigned.Count > 0)
+        {
+            var byMonth = unassigned.GroupBy(e => MonthKey(e.Date)).ToDictionary(g => g.Key, g => g.Sum(x => x.Actual));
+            unassignedRow = new { byMonth, total = byMonth.Values.Sum() };
+        }
+
+        var monthTotals = months.ToDictionary(
+            m => m,
+            m => expenses.Where(e => MonthKey(e.Date) == m).Sum(e => e.Actual));
+
+        return Ok(new
+        {
+            months,
+            rows,
+            unassigned = unassignedRow,
+            monthTotals,
+            grandTotal = expenses.Sum(e => e.Actual),
+            totalBudget = lines.Sum(l => l.Budget)
+        });
+    }
+
+    /// <summary>
+    /// Tax pivot: expense category × month, with row and column totals.
+    /// Mirrors the "For tax expense" sheet in the control workbook.
+    /// </summary>
+    [HttpGet("tax-pivot")]
+    public async Task<IActionResult> TaxPivot([FromQuery] int projectId, CancellationToken ct)
+    {
+        var expenses = await _db.BudgetItems
+            .Where(b => b.ProjectId == projectId && b.Actual > 0)
+            .Select(b => new { b.Category, b.Actual, b.Date })
+            .ToListAsync(ct);
+
+        var months = expenses.Select(e => MonthKey(e.Date)).Distinct().OrderBy(SortKey).ToList();
+
+        var categories = expenses
+            .GroupBy(e => string.IsNullOrWhiteSpace(e.Category) ? "Uncategorized" : e.Category)
+            .OrderBy(g => g.Key)
+            .Select(g =>
+            {
+                var byMonth = g.GroupBy(e => MonthKey(e.Date)).ToDictionary(mg => mg.Key, mg => mg.Sum(x => x.Actual));
+                return new { category = g.Key, byMonth, total = byMonth.Values.Sum() };
+            })
+            .ToList();
+
+        var monthTotals = months.ToDictionary(
+            m => m,
+            m => expenses.Where(e => MonthKey(e.Date) == m).Sum(e => e.Actual));
+
+        return Ok(new
+        {
+            months,
+            categories,
+            monthTotals,
+            grandTotal = expenses.Sum(e => e.Actual)
+        });
+    }
+
+    /// <summary>Sort "undated" last; otherwise chronological by the yyyy-MM string.</summary>
+    private static string SortKey(string monthKey) => monthKey == UNDATED ? "9999-99" : monthKey;
+
     public record AskRequest(string Text);
 
     [HttpPost("ask")]

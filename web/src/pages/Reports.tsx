@@ -6,11 +6,19 @@ type Line = { id: number; description: string; budget: number; spent: number; pe
 type Category = { category: string; totalBudget: number; totalSpent: number; totalEarned: number; lineCount: number; lines: Line[] }
 type BudgetView = { project: string; totalBudget: number; totalSpent: number; totalEarned: number; categoryCount: number; lineCount: number; categories: Category[] }
 
-type ReportKind = 'sov' | 'variance' | 'cost-summary'
+type MonthMap = Record<string, number>
+type SpendRow = { lineId: number; category: string; description: string; budget: number; byMonth: MonthMap; total: number; remaining: number }
+type SpendByMonth = { months: string[]; rows: SpendRow[]; unassigned: { byMonth: MonthMap; total: number } | null; monthTotals: MonthMap; grandTotal: number; totalBudget: number }
+type TaxRow = { category: string; byMonth: MonthMap; total: number }
+type TaxPivotData = { months: string[]; categories: TaxRow[]; monthTotals: MonthMap; grandTotal: number }
+
+type ReportKind = 'sov' | 'variance' | 'cost-summary' | 'spend-month' | 'tax-pivot'
 
 export function Reports() {
   const { current } = useProjects()
   const [data, setData] = useState<BudgetView | null>(null)
+  const [spend, setSpend] = useState<SpendByMonth | null>(null)
+  const [tax, setTax] = useState<TaxPivotData | null>(null)
   const [report, setReport] = useState<ReportKind | null>('sov')
   const [askText, setAskText] = useState('')
   const [recording, setRecording] = useState(false)
@@ -19,9 +27,21 @@ export function Reports() {
   const askRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    if (!current) { setData(null); return }
+    if (!current) { setData(null); setSpend(null); setTax(null); return }
     get<BudgetView>(`/api/budget?projectId=${current.id}`).then(setData)
+    setSpend(null); setTax(null)
   }, [current])
+
+  // Lazy-load the heavier pivot reports only when their tab is opened.
+  useEffect(() => {
+    if (!current) return
+    if (report === 'spend-month' && !spend) {
+      get<SpendByMonth>(`/api/reports/spend-by-month?projectId=${current.id}`).then(setSpend).catch(() => {})
+    }
+    if (report === 'tax-pivot' && !tax) {
+      get<TaxPivotData>(`/api/reports/tax-pivot?projectId=${current.id}`).then(setTax).catch(() => {})
+    }
+  }, [report, current, spend, tax])
 
   function startVoice() {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
@@ -84,11 +104,19 @@ export function Reports() {
         <button className={`tab ${report === 'sov' ? 'active' : ''}`} onClick={() => setReport('sov')}>Schedule of Values</button>
         <button className={`tab ${report === 'variance' ? 'active' : ''}`} onClick={() => setReport('variance')}>Variance Alerts</button>
         <button className={`tab ${report === 'cost-summary' ? 'active' : ''}`} onClick={() => setReport('cost-summary')}>Cost Summary</button>
+        <button className={`tab ${report === 'spend-month' ? 'active' : ''}`} onClick={() => setReport('spend-month')}>Spend by Month</button>
+        <button className={`tab ${report === 'tax-pivot' ? 'active' : ''}`} onClick={() => setReport('tax-pivot')}>Tax Pivot</button>
       </div>
 
       {report === 'sov' && <ScheduleOfValues data={data} />}
       {report === 'variance' && <VarianceReport lines={allLines} />}
       {report === 'cost-summary' && <CostSummary data={data} />}
+      {report === 'spend-month' && (spend
+        ? <SpendByMonthReport data={spend} />
+        : <p className="muted" style={{ marginTop: 16 }}>Loading…</p>)}
+      {report === 'tax-pivot' && (tax
+        ? <TaxPivotReport data={tax} />
+        : <p className="muted" style={{ marginTop: 16 }}>Loading…</p>)}
     </div>
   )
 }
@@ -218,6 +246,120 @@ function VarianceReport({ lines }: { lines: (Line & { category: string })[] }) {
         </div>
       )}
     </>
+  )
+}
+
+function fmtMonth(key: string): string {
+  if (key === 'undated') return 'Undated'
+  const [y, m] = key.split('-')
+  const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const idx = parseInt(m, 10) - 1
+  return names[idx] ? `${names[idx]} ${y}` : key
+}
+const money = (n: number) => '$' + (n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })
+
+function SpendByMonthReport({ data }: { data: SpendByMonth }) {
+  const { months, rows, unassigned, monthTotals, grandTotal, totalBudget } = data
+  const spentRows = rows.filter(r => r.total > 0)
+  if (months.length === 0) {
+    return <p className="muted" style={{ marginTop: 16 }}>No expenses recorded yet. Add some to see the monthly breakdown.</p>
+  }
+  return (
+    <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
+      <div className="cat-header">
+        <strong>Spend by month</strong>
+        <div style={{ display: 'flex', gap: 12, fontSize: 13 }}>
+          <span>Spent: <strong>{money(grandTotal)}</strong></span>
+          <span>Budget: <strong>{money(totalBudget)}</strong></span>
+        </div>
+      </div>
+      <table className="data" style={{ borderRadius: 0 }}>
+        <thead>
+          <tr>
+            <th>Budget line</th>
+            <th style={{ textAlign: 'right' }}>Budget</th>
+            {months.map(m => <th key={m} style={{ textAlign: 'right' }}>{fmtMonth(m)}</th>)}
+            <th style={{ textAlign: 'right' }}>Total</th>
+            <th style={{ textAlign: 'right' }}>Remaining</th>
+          </tr>
+        </thead>
+        <tbody>
+          {spentRows.map(r => (
+            <tr key={r.lineId}>
+              <td><span className="muted" style={{ fontSize: 12 }}>{r.category}</span><br />{r.description}</td>
+              <td style={{ textAlign: 'right' }}>{money(r.budget)}</td>
+              {months.map(m => (
+                <td key={m} style={{ textAlign: 'right' }}>{r.byMonth[m] ? money(r.byMonth[m]) : <span className="muted">–</span>}</td>
+              ))}
+              <td style={{ textAlign: 'right' }}><strong>{money(r.total)}</strong></td>
+              <td style={{ textAlign: 'right', color: r.remaining >= 0 ? 'var(--success)' : 'var(--danger)' }}>{money(r.remaining)}</td>
+            </tr>
+          ))}
+          {unassigned && (
+            <tr>
+              <td><em className="muted">Unassigned (no budget line)</em></td>
+              <td style={{ textAlign: 'right' }} className="muted">–</td>
+              {months.map(m => (
+                <td key={m} style={{ textAlign: 'right' }}>{unassigned.byMonth[m] ? money(unassigned.byMonth[m]) : <span className="muted">–</span>}</td>
+              ))}
+              <td style={{ textAlign: 'right' }}><strong>{money(unassigned.total)}</strong></td>
+              <td style={{ textAlign: 'right' }} className="muted">–</td>
+            </tr>
+          )}
+        </tbody>
+        <tfoot>
+          <tr>
+            <th>Monthly total</th>
+            <th />
+            {months.map(m => <th key={m} style={{ textAlign: 'right' }}>{money(monthTotals[m] || 0)}</th>)}
+            <th style={{ textAlign: 'right' }}>{money(grandTotal)}</th>
+            <th />
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  )
+}
+
+function TaxPivotReport({ data }: { data: TaxPivotData }) {
+  const { months, categories, monthTotals, grandTotal } = data
+  if (months.length === 0) {
+    return <p className="muted" style={{ marginTop: 16 }}>No expenses recorded yet.</p>
+  }
+  return (
+    <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
+      <div className="cat-header">
+        <strong>Expenses by category &amp; month</strong>
+        <span style={{ fontSize: 13 }}>Total: <strong>{money(grandTotal)}</strong></span>
+      </div>
+      <table className="data" style={{ borderRadius: 0 }}>
+        <thead>
+          <tr>
+            <th>Category</th>
+            {months.map(m => <th key={m} style={{ textAlign: 'right' }}>{fmtMonth(m)}</th>)}
+            <th style={{ textAlign: 'right' }}>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {categories.map(c => (
+            <tr key={c.category}>
+              <td>{c.category}</td>
+              {months.map(m => (
+                <td key={m} style={{ textAlign: 'right' }}>{c.byMonth[m] ? money(c.byMonth[m]) : <span className="muted">–</span>}</td>
+              ))}
+              <td style={{ textAlign: 'right' }}><strong>{money(c.total)}</strong></td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <th>Total</th>
+            {months.map(m => <th key={m} style={{ textAlign: 'right' }}>{money(monthTotals[m] || 0)}</th>)}
+            <th style={{ textAlign: 'right' }}>{money(grandTotal)}</th>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
   )
 }
 
