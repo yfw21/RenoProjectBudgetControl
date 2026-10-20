@@ -5,15 +5,66 @@ using BudgetApi.Services.Llm;
 using BudgetApi.Services.Materials;
 using BudgetApi.Services.Rag;
 using BudgetApi.Services.Scheduling;
+using BudgetApi.Services.Storage;
 using BudgetApi.Tools;
+using Azure.Identity;
+using Azure.Monitor.OpenTelemetry.AspNetCore;
+using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Specialized;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+// Database: SQLite on a laptop, Azure SQL in the cloud. Same EF model, chosen by config.
+var dbProvider = (builder.Configuration["Database:Provider"] ?? "sqlite").ToLowerInvariant();
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<BudgetContext>(o =>
-    o.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
+{
+    if (dbProvider == "sqlserver")
+        // Azure SQL serverless auto-pauses; the first connection after a pause can fail transiently.
+        o.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure(maxRetryCount: 6));
+    else
+        o.UseSqlite(connectionString);
+});
+
+// File storage: local disk or Azure Blob Storage.
+var storageProvider = (builder.Configuration["Storage:Provider"] ?? "local").ToLowerInvariant();
+if (storageProvider == "azure")
+    builder.Services.AddSingleton<IFileStore, AzureBlobFileStore>();
+else
+    builder.Services.AddSingleton<IFileStore, LocalFileStore>();
+
+// Auth cookies are encrypted with Data Protection keys. In a container those keys would be lost
+// on every restart/redeploy (logging everyone out), so in the cloud they live in blob storage.
+if (storageProvider == "azure")
+{
+    var dpBlob = builder.Configuration["Storage:ConnectionString"] is { Length: > 0 } dpConn
+        ? new BlobContainerClient(dpConn, "dataprotection").GetBlobClient("keys.xml")
+        : new BlobClient(new Uri($"{builder.Configuration["Storage:BlobEndpoint"]!.TrimEnd('/')}/dataprotection/keys.xml"),
+            new DefaultAzureCredential(new DefaultAzureCredentialOptions { ManagedIdentityClientId = builder.Configuration["AZURE_CLIENT_ID"] }));
+    dpBlob.GetParentBlobContainerClient().CreateIfNotExists();
+    builder.Services.AddDataProtection().SetApplicationName("RenoBudget").PersistKeysToAzureBlobStorage(dpBlob);
+}
+
+// Observability: traces, metrics and logs to Application Insights when it's configured.
+if (!string.IsNullOrWhiteSpace(builder.Configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"]))
+    builder.Services.AddOpenTelemetry().UseAzureMonitor();
+
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<BudgetContext>("database", tags: new[] { "ready" });
+
+// Behind Azure Container Apps ingress, TLS terminates at the proxy; trust its X-Forwarded-* headers.
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    o.KnownNetworks.Clear();
+    o.KnownProxies.Clear();
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -79,8 +130,10 @@ builder.Services.AddScoped<Scheduler>();
 builder.Services.AddScoped<BurnRateService>();
 builder.Services.AddSingleton<ToolDispatcher>();
 
+var corsOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>()
+    ?? new[] { "http://localhost:5173", "http://localhost:5174" };
 builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
-    p.WithOrigins("http://localhost:5173", "http://localhost:5174")
+    p.WithOrigins(corsOrigins)
      .AllowAnyHeader().AllowAnyMethod().AllowCredentials()));
 
 var app = builder.Build();
@@ -100,9 +153,9 @@ using (var scope = app.Services.CreateScope())
     foreach (var a in db.CategoryActivities.Where(x => x.ProjectId == 0)) a.ProjectId = defaultId;
     db.SaveChanges();
 
-    // Re-anchor FileBlob StoragePath if Files:Root has moved.
+    // Re-anchor FileBlob StoragePath if Files:Root has moved (local disk storage only).
     var filesRoot = builder.Configuration["Files:Root"] ?? "uploads";
-    if (Path.IsPathRooted(filesRoot))
+    if (storageProvider == "local" && Path.IsPathRooted(filesRoot))
     {
         Directory.CreateDirectory(filesRoot);
         foreach (var blob in db.FileBlobs.ToList())
@@ -120,6 +173,8 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
+app.UseForwardedHeaders();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -132,6 +187,9 @@ app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+// Liveness: the process is up. Readiness: it can reach its database.
+app.MapHealthChecks("/healthz", new HealthCheckOptions { Predicate = _ => false });
+app.MapHealthChecks("/healthz/ready", new HealthCheckOptions { Predicate = c => c.Tags.Contains("ready") });
 app.MapFallbackToFile("index.html");
 
 app.Run();

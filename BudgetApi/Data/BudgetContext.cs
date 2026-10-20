@@ -26,6 +26,12 @@ public class BudgetContext : DbContext
     public DbSet<DailyBriefing> DailyBriefings => Set<DailyBriefing>();
     public DbSet<AuditLogEntry> AuditLog => Set<AuditLogEntry>();
 
+    // SQLite ignores precision; SQL Server would otherwise silently truncate to (18,2) with a warning.
+    protected override void ConfigureConventions(ModelConfigurationBuilder c)
+    {
+        c.Properties<decimal>().HavePrecision(18, 4);
+    }
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.Entity<User>().HasIndex(u => u.Username).IsUnique();

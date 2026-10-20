@@ -1,0 +1,43 @@
+# "Azure on a laptop": runs the app container exactly as it runs in Azure Container Apps,
+# against local stand-ins for the cloud services:
+#   Azure SQL Database  -> SQL Server 2022 container (same engine)
+#   Azure Blob Storage  -> Azurite (Microsoft's official storage emulator)
+#
+#   docker compose up --build -d
+#   scripts/smoke-api.sh http://localhost:8080
+#
+# The SA password below is for this throwaway local container only. In Azure there is
+# no password at all: the app signs in to SQL and Storage with its Managed Identity.
+services:
+  app:
+    build: .
+    ports: ["8080:8080"]
+    environment:
+      Database__Provider: sqlserver
+      ConnectionStrings__DefaultConnection: "Server=sql,1433;Database=renobudget;User Id=sa;Password=Local-Dev-Only-1!;TrustServerCertificate=True"
+      Storage__Provider: azure
+      Storage__ConnectionString: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;"
+      Llm__Provider: ${LLM_PROVIDER:-ollama}
+      Ollama__BaseUrl: http://host.docker.internal:11434
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      sql: { condition: service_healthy }
+      azurite: { condition: service_started }
+
+  sql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Local-Dev-Only-1!"
+    ports: ["14330:1433"]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Local-Dev-Only-1!' -Q 'SELECT 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    command: azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+    ports: ["10000:10000"]

@@ -52,7 +52,13 @@ public class ChatController : ControllerBase
 
         for (var hop = 0; hop < MaxToolHops; hop++)
         {
-            var resp = await _llm.ChatAsync(messages, toolDefs, ct);
+            OllamaChatResponse resp;
+            try { resp = await _llm.ChatAsync(messages, toolDefs, ct); }
+            catch (HttpRequestException e)
+            {
+                _log.LogWarning("LLM unreachable: {Msg}", e.Message);
+                return StatusCode(503, new { error = "AI assistant is unavailable (no language model is configured or reachable)." });
+            }
             messages.Add(resp.Message);
 
             if (resp.Message.ToolCalls is null || resp.Message.ToolCalls.Count == 0)
