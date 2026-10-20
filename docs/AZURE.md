@@ -10,6 +10,7 @@ into a configuration switch rather than a fork of the code, so the same image ru
 | Database | SQLite | Azure SQL (serverless), EF Core retry on transient errors | `Program.cs` `Database:Provider` |
 | File uploads | `Files:Root` folder | Blob Storage via `IFileStore` | `Services/Storage/` |
 | Auth cookie keys | in-memory/user profile | Persisted to Blob so restarts/redeploys don't log users out | `Program.cs` Data Protection |
+| Receipt/invoice reading | Tesseract OCR + local LLM | Azure AI Document Intelligence prebuilt models, local pipeline as fallback | `Services/Receipts/DocumentIntelligenceExtractor.cs` |
 | Secrets | appsettings / env | Key Vault reference on the Container App | `infra/main.bicep` |
 | Telemetry | console logs | OpenTelemetry → Application Insights | `UseAzureMonitor()` |
 | Health | – | `/healthz` (liveness), `/healthz/ready` (DB reachable) | `Program.cs`, container probes |
@@ -48,6 +49,18 @@ which it already is now that files and cookie keys live in Blob.
 **`EnsureCreated` instead of migrations.** Inherited from the laptop version. Fine for a demo; for
 production I would switch to EF migrations applied by a pipeline step.
 
+**Azure AI Document Intelligence for receipts and invoices.** Receipts go to `prebuilt-receipt`
+(merchant, date, total, items); contractor invoices go to `prebuilt-invoice` (vendor, invoice number, line
+items with quantity, unit price and amount). Each field comes back with a confidence score, and the UI shows
+it beside the field and flags anything under 80% for the user to check: the model proposes, a person confirms
+before anything is saved (human in the loop). Why a prebuilt model and not an LLM prompt: it is purpose-trained
+for these documents, returns typed values (dates, currency) instead of free text to parse, gives calibrated
+confidence, and needs no prompt engineering. API keys are disabled on the resource; the app calls it with its
+Managed Identity (Cognitive Services User role). If the service is unreachable the app falls back to local
+Tesseract OCR and tells the user, so an outage degrades the feature instead of breaking uploads.
+*Trade-off:* each page costs money beyond the free 500 pages/month, and documents leave the app for Azure
+(same region, not used for training), which matters for the privacy conversation.
+
 **AI assistant in the cloud.** Locally it uses Ollama. In Azure it uses the Anthropic API when
 `ANTHROPIC_API_KEY` is supplied at deploy time (stored in Key Vault); without a key the core app works
 and the AI features report that they're unavailable.
@@ -73,6 +86,7 @@ Container App, waits for readiness, and runs the smoke test against the live URL
 | Container Apps | Free grant covers a demo (180k vCPU-s/month) |
 | Azure SQL serverless | Free offer (pauses rather than bills when exhausted) |
 | Storage, Key Vault, Log Analytics | Cents |
+| AI Document Intelligence F0 | Free, 500 pages/month (one F0 per subscription; `DOC_INTEL_SKU=S0` otherwise) |
 | Container Registry Basic | ~$5/month, the only fixed cost |
 
 ## CI/CD (GitHub Actions)
@@ -99,13 +113,24 @@ Then in GitHub: create environment `production`; add secrets `AZURE_CLIENT_ID` (
 
 ## Interview demo script (~5 minutes)
 
-1. **The app** (live URL): log in, add an expense, upload a receipt, show the Reports tab.
+1. **The app** (live URL): log in, **Smart upload** a photo of a receipt. Point at the confidence badges and
+   the amber "check" flag: Document Intelligence proposes, a person confirms. Then **Smart invoice** a
+   contractor PDF to show line items extracted, and the Reports tab.
+   Portal → Document Intelligence resource → Keys and Endpoint shows keys are disabled.
 2. **Where the receipt went:** Portal → Storage account → `uploads` container. Point out shared keys are
    disabled; the app reached it with its identity.
 3. **No secrets:** Container App → Containers → Environment variables. Connection string has no password;
    the AI key is a Key Vault reference.
 4. **Observability:** Application Insights → Transaction search. Find the upload request and show the
-   end-to-end trace: HTTP → SQL → Blob.
+   end-to-end trace: HTTP → Document Intelligence → SQL → Blob.
 5. **Infrastructure as code:** walk through `infra/main.bicep` top to bottom (the diagram at the top).
 6. **Pipeline:** show a green CI run where the container was tested against SQL Server + Azurite.
 7. **Talk trade-offs:** pick two from "Design decisions" above.
+
+## Testing Document Intelligence
+
+* `dotnet test tests/BudgetApi.Tests` maps receipt and invoice responses in the real REST wire format
+  (`tests/BudgetApi.Tests/Fixtures/*.json`) through the SDK's own deserializer.
+* Against the real service from a laptop: `az login`, give yourself the *Cognitive Services User* role on the
+  resource, then `DocumentIntelligence__Endpoint=https://<name>.cognitiveservices.azure.com/ dotnet run` in
+  `BudgetApi/`. `DefaultAzureCredential` uses your CLI login, so there is still no key.

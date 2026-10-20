@@ -36,6 +36,8 @@ export function Expenses() {
   const [budgetLines, setBudgetLines] = useState<BudgetLine[]>([])
   const [missing, setMissing] = useState<string[]>([])
   const [parseNote, setParseNote] = useState<string | null>(null)
+  // Per-field confidence when Azure AI Document Intelligence read the receipt.
+  const [aiRead, setAiRead] = useState<{ confidence: Record<string, number>; threshold: number } | null>(null)
   const [lineSuggestionSource, setLineSuggestionSource] = useState<'server' | 'local' | null>(null)
   const [suggestingLine, setSuggestingLine] = useState(false)
   const userPickedLineRef = useRef(false)
@@ -97,6 +99,7 @@ export function Expenses() {
     setReceiptFile(null)
     setMissing([])
     setParseNote(null)
+    setAiRead(null)
     setRawText(null)
     setShowRaw(false)
     setLineSuggestionSource(null)
@@ -156,6 +159,7 @@ export function Expenses() {
       setReceiptFile(null)
       setMissing(data.missing || [])
       setParseNote(data.note || `Parsed from: "${quickText.trim()}"`)
+      setAiRead(null)
       setRawText(quickText.trim())
       setShowRaw(false)
       setShowQuickAdd(false)
@@ -304,6 +308,9 @@ export function Expenses() {
       setReceiptFile(file)
       setMissing(data.missing || [])
       setParseNote(data.note || null)
+      setAiRead(data.source === 'azure-document-intelligence'
+        ? { confidence: data.confidence || {}, threshold: data.reviewThreshold ?? 0.8 }
+        : null)
       setRawText(data.rawText || null)
       setShowRaw(false)
       setShowForm(true)
@@ -382,7 +389,14 @@ export function Expenses() {
   const budget = expenses.reduce((s, e) => s + (e.budget ?? 0), 0)
   const exportUrl = `/api/exports/expenses.xlsx?projectId=${current.id}`
   const isMissing = (field: string) => missing.includes(field)
-  const cls = (field: string) => isMissing(field) ? 'input-missing' : ''
+  const isUnsure = (field: string) => aiRead != null && (aiRead.confidence[field] ?? 1) < aiRead.threshold
+  const cls = (field: string) => isMissing(field) ? 'input-missing' : isUnsure(field) ? 'input-unsure' : ''
+  const conf = (field: string) => {
+    const c = aiRead?.confidence[field]
+    if (c == null) return null
+    return <span className={isUnsure(field) ? 'conf conf-low' : 'conf'}
+                 title="Azure AI Document Intelligence confidence">{Math.round(c * 100)}%{isUnsure(field) ? ' · check' : ''}</span>
+  }
 
   return (
     <div className="page">
@@ -488,6 +502,12 @@ export function Expenses() {
               {receiptFile && missing.length === 0 && (
                 <div className="banner-ok">Fields extracted from {receiptFile.name}. Review and confirm.</div>
               )}
+              {aiRead && (
+                <div className="banner-info">
+                  Read by Azure AI Document Intelligence (prebuilt receipt model). Percentages show how sure the
+                  model is about each field; anything under {Math.round(aiRead.threshold * 100)}% is flagged for you to check.
+                </div>
+              )}
 
               <label>Description {isMissing('description') && <span className="req">required</span>}
                 <input className={cls('description')} value={draft.description}
@@ -526,16 +546,16 @@ export function Expenses() {
                   <span className="muted" style={{ fontSize: 11 }}>No budget lines yet — import a budget to enable auto-matching</span>
                 )}
               </label>
-              <label>Amount (USD) {isMissing('amount') && <span className="req">required</span>}
+              <label>Amount (USD) {isMissing('amount') && <span className="req">required</span>} {conf('amount')}
                 <input className={cls('amount')} type="number" step="0.01" value={draft.actual}
                        onChange={ev => setDraft({ ...draft, actual: parseFloat(ev.target.value) || 0 })} />
               </label>
-              <label>Vendor {isMissing('vendor') && <span className="req">required</span>}
+              <label>Vendor {isMissing('vendor') && <span className="req">required</span>} {conf('vendor')}
                 <input className={cls('vendor')} value={draft.vendor}
                        onChange={ev => setDraft({ ...draft, vendor: ev.target.value })} />
               </label>
-              <label>Date
-                <input type="date" value={draft.date} onChange={ev => setDraft({ ...draft, date: ev.target.value })} />
+              <label>Date {conf('date')}
+                <input className={cls('date')} type="date" value={draft.date} onChange={ev => setDraft({ ...draft, date: ev.target.value })} />
               </label>
 
               {!receiptFile && (

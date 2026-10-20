@@ -4,8 +4,8 @@ A renovation project manager for contractors: budgets and expenses, receipt and 
 scheduling with resource-conflict detection, materials and purchase orders, Excel/PDF reports, and an AI
 assistant that works through the same data with tool calls.
 
-**Stack:** ASP.NET Core 8 · EF Core · React 18 + TypeScript (Vite) · Playwright · Docker · Azure (Container Apps,
-Azure SQL, Blob Storage, Key Vault, Application Insights) · Bicep · GitHub Actions
+**Stack:** ASP.NET Core 8 · EF Core · React 18 + TypeScript (Vite) · xUnit · Playwright · Docker · Azure (Container Apps,
+Azure SQL, Blob Storage, AI Document Intelligence, Key Vault, Application Insights) · Bicep · GitHub Actions
 
 ```mermaid
 flowchart LR
@@ -16,12 +16,14 @@ flowchart LR
     SQL[(Azure SQL<br/>serverless)]
     BLOB[(Blob Storage<br/>receipts + key ring)]
     KV[Key Vault]
+    DI[AI Document<br/>Intelligence]
     AI[Application Insights]
     ACR[Container Registry]
     CA --- MI
     MI -- Entra auth --> SQL
     MI -- RBAC --> BLOB
     MI -- RBAC --> KV
+    MI -- RBAC --> DI
     MI -- AcrPull --> ACR
     CA -- OpenTelemetry --> AI
   end
@@ -36,6 +38,6 @@ flowchart LR
 | Cloud on a laptop | `docker compose up --build` → http://localhost:8080 | SQL Server + Azurite: the same code paths as Azure |
 | Azure | `az login && scripts/azure-deploy.sh` | Everything in the diagram |
 
-Then verify any of them with `scripts/smoke-api.sh <url>`.
+Then verify any of them with `scripts/smoke-api.sh <url>`. Unit tests: `dotnet test tests/BudgetApi.Tests`.
 
 The cloud design, decisions, costs and CI/CD setup are in [docs/AZURE.md](docs/AZURE.md).

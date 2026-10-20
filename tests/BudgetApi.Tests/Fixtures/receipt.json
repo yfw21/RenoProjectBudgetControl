@@ -1,0 +1,36 @@
+{
+  "apiVersion": "2024-11-30",
+  "modelId": "prebuilt-receipt",
+  "stringIndexType": "textElements",
+  "content": "THE HOME DEPOT\n2450 Washington Blvd\nBaltimore MD\n10/03/2026 09:14 AM\n2x4x8 STUD 12 @ 3.98 47.76\nDRYWALL SCREWS 1LB 9.97\nJOINT COMPOUND 4.5G 18.48\nSUBTOTAL 76.21\nSALES TAX 4.57\nTOTAL $80.78",
+  "pages": [],
+  "documents": [
+    {
+      "docType": "receipt.retailMeal",
+      "spans": [ { "offset": 0, "length": 190 } ],
+      "confidence": 0.982,
+      "fields": {
+        "MerchantName": { "type": "string", "valueString": "THE HOME DEPOT", "content": "THE HOME DEPOT", "confidence": 0.972 },
+        "TransactionDate": { "type": "date", "valueDate": "2026-10-03", "content": "10/03/2026", "confidence": 0.989 },
+        "Subtotal": { "type": "currency", "valueCurrency": { "amount": 76.21, "currencySymbol": "$", "currencyCode": "USD" }, "content": "76.21", "confidence": 0.95 },
+        "TotalTax": { "type": "currency", "valueCurrency": { "amount": 4.57, "currencySymbol": "$", "currencyCode": "USD" }, "content": "4.57", "confidence": 0.94 },
+        "Total": { "type": "currency", "valueCurrency": { "amount": 80.78, "currencySymbol": "$", "currencyCode": "USD" }, "content": "$80.78", "confidence": 0.981 },
+        "Items": {
+          "type": "array",
+          "valueArray": [
+            { "type": "object", "content": "2x4x8 STUD 12 @ 3.98 47.76", "confidence": 0.9, "valueObject": {
+              "Description": { "type": "string", "valueString": "2x4x8 STUD", "content": "2x4x8 STUD", "confidence": 0.91 },
+              "Quantity": { "type": "number", "valueNumber": 12, "content": "12", "confidence": 0.9 },
+              "TotalPrice": { "type": "currency", "valueCurrency": { "amount": 47.76, "currencySymbol": "$", "currencyCode": "USD" }, "content": "47.76", "confidence": 0.93 } } },
+            { "type": "object", "content": "DRYWALL SCREWS 1LB 9.97", "confidence": 0.9, "valueObject": {
+              "Description": { "type": "string", "valueString": "DRYWALL SCREWS 1LB", "content": "DRYWALL SCREWS 1LB", "confidence": 0.9 },
+              "TotalPrice": { "type": "currency", "valueCurrency": { "amount": 9.97, "currencySymbol": "$", "currencyCode": "USD" }, "content": "9.97", "confidence": 0.92 } } },
+            { "type": "object", "content": "JOINT COMPOUND 4.5G 18.48", "confidence": 0.9, "valueObject": {
+              "Description": { "type": "string", "valueString": "JOINT COMPOUND 4.5G", "content": "JOINT COMPOUND 4.5G", "confidence": 0.89 },
+              "TotalPrice": { "type": "currency", "valueCurrency": { "amount": 18.48, "currencySymbol": "$", "currencyCode": "USD" }, "content": "18.48", "confidence": 0.92 } } }
+          ]
+        }
+      }
+    }
+  ]
+}

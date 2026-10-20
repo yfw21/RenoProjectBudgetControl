@@ -4,6 +4,7 @@
 //                         │  user-assigned Managed Identity (no passwords/keys anywhere)
 //                         ├──▶ Azure SQL Database (serverless, Entra-only auth)
 //                         ├──▶ Blob Storage (receipts + auth-cookie key ring; shared keys disabled)
+//                         ├──▶ AI Document Intelligence (receipt + invoice extraction, keyless)
 //                         ├──▶ Key Vault (optional Anthropic API key, referenced as a secret)
 //                         └──▶ Application Insights / Log Analytics (traces, logs, metrics)
 //   Container Registry ──image──▶ Container App (pulled with the same identity)
@@ -32,6 +33,10 @@ param anthropicApiKey string = ''
 @maxValue(3)
 param minReplicas int = 0
 
+@description('F0 is free (500 pages/month) but only one F0 Document Intelligence resource is allowed per subscription.')
+@allowed([ 'F0', 'S0' ])
+param docIntelSku string = 'F0'
+
 var suffix = uniqueString(resourceGroup().id, appName)
 var tags = { app: appName, managedBy: 'bicep' }
 var hasAiKey = !empty(anthropicApiKey)
@@ -41,6 +46,7 @@ var databaseName = 'renobudget'
 var roleAcrPull = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 var roleBlobDataContributor = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 var roleKeyVaultSecretsUser = '4633458b-17de-408a-b874-0445c86b69e6'
+var roleCognitiveServicesUser = 'a97b65f3-24c7-4388-baec-2e87135dc908'
 
 // ---------------------------------------------------------------------------- identity
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
@@ -160,6 +166,30 @@ resource vaultSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' =
   }
 }
 
+// ---------------------------------------------------------------------------- ai document intelligence
+resource docIntel 'Microsoft.CognitiveServices/accounts@2023-05-01' = {
+  name: 'di-${appName}-${suffix}'
+  location: location
+  tags: tags
+  kind: 'FormRecognizer'
+  sku: { name: docIntelSku }
+  properties: {
+    customSubDomainName: 'di-${appName}-${suffix}'   // required for Entra ID (token) auth
+    disableLocalAuth: true                           // API keys off: Managed Identity only
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+resource docIntelUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: docIntel
+  name: guid(docIntel.id, identity.id, roleCognitiveServicesUser)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleCognitiveServicesUser)
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // ---------------------------------------------------------------------------- azure sql
 resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
   name: 'sql-${appName}-${suffix}'
@@ -229,6 +259,7 @@ var baseEnv = [
   { name: 'Storage__Container', value: uploadsContainer.name }
   { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
   { name: 'Llm__Provider', value: hasAiKey ? 'anthropic' : 'ollama' }
+  { name: 'DocumentIntelligence__Endpoint', value: docIntel.properties.endpoint }
 ]
 var aiEnv = hasAiKey ? [ { name: 'Anthropic__ApiKey', secretRef: 'anthropic-api-key' } ] : []
 
@@ -273,7 +304,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (!empty(containerImag
       }
     }
   }
-  dependsOn: [ acrPull, blobDataContributor, vaultSecretsUser, sqlAllowAzure, sqlDb ]
+  dependsOn: [ acrPull, blobDataContributor, vaultSecretsUser, docIntelUser, sqlAllowAzure, sqlDb ]
 }
 
 output acrName string = acr.name

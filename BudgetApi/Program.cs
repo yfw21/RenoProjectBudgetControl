@@ -121,6 +121,7 @@ builder.Services.AddSingleton<BriefingService>();
 builder.Services.AddHostedService<DailyBriefingHostedService>();
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<BudgetApi.Services.Receipts.TesseractOcr>();
+builder.Services.AddSingleton<BudgetApi.Services.Receipts.DocumentIntelligenceExtractor>();
 builder.Services.AddScoped<BudgetApi.Services.Receipts.ReceiptExtractor>();
 builder.Services.AddScoped<BudgetApi.Services.Receipts.BudgetLineSuggester>();
 builder.Services.AddScoped<BudgetApi.Services.Receipts.InvoiceLineExtractor>();

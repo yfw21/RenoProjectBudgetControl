@@ -119,6 +119,8 @@ public class ExpenseParseController : ControllerBase
         missing = result.Missing,
         rawText = result.RawText,
         source = result.Source,
-        note = result.Note
+        note = result.Note,
+        confidence = result.Confidence,
+        reviewThreshold = DocumentIntelligenceExtractor.ReviewThreshold
     };
 }

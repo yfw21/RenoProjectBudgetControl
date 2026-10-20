@@ -5,7 +5,8 @@
 #   scripts/azure-deploy.sh [resource-group] [location]
 #
 # Optional env: ANTHROPIC_API_KEY (enables the AI assistant; stored in Key Vault),
-#               MIN_REPLICAS=1 (keep the app warm before an interview demo).
+#               MIN_REPLICAS=1 (keep the app warm before an interview demo),
+#               DOC_INTEL_SKU=S0 (if the subscription already has its one free F0 Document Intelligence).
 set -euo pipefail
 
 RG="${1:-rg-renobudget}"
@@ -16,7 +17,7 @@ TAG="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || date +%s)"
 deploy() {  # $1 = container image ('' = infrastructure only)
   az deployment group create -g "$RG" -n "renobudget-$(date +%s)" \
     --template-file "$ROOT/infra/main.bicep" \
-    --parameters containerImage="$1" anthropicApiKey="${ANTHROPIC_API_KEY:-}" minReplicas="${MIN_REPLICAS:-0}" \
+    --parameters containerImage="$1" anthropicApiKey="${ANTHROPIC_API_KEY:-}" minReplicas="${MIN_REPLICAS:-0}" docIntelSku="${DOC_INTEL_SKU:-F0}" \
     --query properties.outputs -o json
 }
 out() { python3 -c "import sys,json; print(json.load(sys.stdin)['$1']['value'])"; }
