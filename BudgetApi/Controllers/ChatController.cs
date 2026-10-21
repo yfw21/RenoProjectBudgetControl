@@ -59,6 +59,11 @@ public class ChatController : ControllerBase
                 _log.LogWarning("LLM unreachable: {Msg}", e.Message);
                 return StatusCode(503, new { error = "AI assistant is unavailable (no language model is configured or reachable)." });
             }
+            catch (LlmUnavailableException e)
+            {
+                _log.LogWarning(e, "LLM unavailable");
+                return StatusCode(503, new { error = e.Message });
+            }
             messages.Add(resp.Message);
 
             if (resp.Message.ToolCalls is null || resp.Message.ToolCalls.Count == 0)

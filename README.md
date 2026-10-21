@@ -5,7 +5,8 @@ scheduling with resource-conflict detection, materials and purchase orders, Exce
 assistant that works through the same data with tool calls.
 
 **Stack:** ASP.NET Core 8 · EF Core · React 18 + TypeScript (Vite) · xUnit · Playwright · Docker · Azure (Container Apps,
-Azure SQL, Blob Storage, AI Document Intelligence, Key Vault, Application Insights) · Bicep · GitHub Actions
+Azure SQL, Blob Storage, AI Document Intelligence, Key Vault, Application Insights) · Claude (Anthropic SDK; Microsoft
+Foundry or Claude API) · Bicep · GitHub Actions
 
 ```mermaid
 flowchart LR
@@ -17,26 +18,29 @@ flowchart LR
     BLOB[(Blob Storage<br/>receipts + key ring)]
     KV[Key Vault]
     DI[AI Document<br/>Intelligence]
+    CL["Claude on<br/>Microsoft Foundry<br/>(optional)"]
     AI[Application Insights]
-    ACR[Container Registry]
+    BUD[Budget alert]
     CA --- MI
     MI -- Entra auth --> SQL
     MI -- RBAC --> BLOB
     MI -- RBAC --> KV
     MI -- RBAC --> DI
-    MI -- AcrPull --> ACR
+    MI -. RBAC .-> CL
     CA -- OpenTelemetry --> AI
   end
-  GH[GitHub Actions] -- OIDC, no secrets --> ACR
+  GH[GitHub Actions] -- image --> GHCR[GitHub Container<br/>Registry]
+  GHCR -- public image --> CA
+  GH -- OIDC, no secrets --> CA
 ```
 
 ## Run it
 
 | Mode | Command | Uses |
 |---|---|---|
-| Laptop | `cd BudgetApi && dotnet run` (+ `cd web && npm run dev`) | SQLite, local disk, Ollama |
+| Laptop | `cd BudgetApi && dotnet run` (+ `cd web && npm run dev`) | SQLite, local disk, Ollama (free, local AI) |
 | Cloud on a laptop | `docker compose up --build` → http://localhost:8080 | SQL Server + Azurite: the same code paths as Azure |
-| Azure | `az login && scripts/azure-deploy.sh` | Everything in the diagram |
+| Azure | `az login && IMAGE=… BUDGET_EMAIL=… scripts/azure-deploy.sh` | Everything in the diagram, at $0 by default |
 
 Then verify any of them with `scripts/smoke-api.sh <url>`. Unit tests: `dotnet test tests/BudgetApi.Tests`.
 

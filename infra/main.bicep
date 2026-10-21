@@ -5,12 +5,15 @@
 //                         ├──▶ Azure SQL Database (serverless, Entra-only auth)
 //                         ├──▶ Blob Storage (receipts + auth-cookie key ring; shared keys disabled)
 //                         ├──▶ AI Document Intelligence (receipt + invoice extraction, keyless)
-//                         ├──▶ Key Vault (optional Anthropic API key, referenced as a secret)
+//                         ├──▶ Claude (optional, off by default: Microsoft Foundry keyless, or Anthropic API key)
+//                         ├──▶ Key Vault (holds the Anthropic API key if one is supplied)
 //                         └──▶ Application Insights / Log Analytics (traces, logs, metrics)
-//   Container Registry ──image──▶ Container App (pulled with the same identity)
+//   GitHub Container Registry ──public image──▶ Container App
+//   Cost Management budget ──email──▶ you, before anything is billed
 //
-// Deploy with scripts/azure-deploy.sh. First run passes containerImage='' to create the
-// registry, then the image is built in ACR and this template is deployed again with it.
+// Built to run at $0: every resource is on a free tier or free grant, the app scales to zero,
+// log ingestion is capped under the free 5 GB/month, and the budget alert is the safety net.
+// Deploy with scripts/azure-deploy.sh. containerImage='' creates the infrastructure only.
 
 targetScope = 'resourceGroup'
 
@@ -21,12 +24,34 @@ param appName string = 'renobudget'
 
 param location string = resourceGroup().location
 
-@description('Full image reference, e.g. myacr.azurecr.io/renobudget:abc123. Empty = infrastructure only.')
+@description('Public image, e.g. ghcr.io/<owner>/renobudget:abc123 (GitHub Container Registry is free). Empty = infrastructure only.')
 param containerImage string = ''
 
-@description('Optional Anthropic API key for the AI assistant. Stored in Key Vault, never in app config.')
+@description('AI assistant: off = free (assistant reports unavailable); foundry = Claude in Microsoft Foundry via managed identity (billed per token, needs pay-as-you-go); anthropic = Claude API key (billed per token).')
+@allowed([ 'off', 'foundry', 'anthropic' ])
+param claudeMode string = 'off'
+
+@description('Anthropic API key, used only when claudeMode = anthropic. Stored in Key Vault, never in app config.')
 @secure()
 param anthropicApiKey string = ''
+
+@description('Claude model. With foundry this is also the deployment name.')
+param claudeModel string = 'claude-opus-5-5'
+
+@description('Foundry only: Anthropic requires the organization name, country and industry of the user (Marketplace attestation).')
+param claudeOrganizationName string = ''
+param claudeCountryCode string = 'US'
+@allowed([ 'technology', 'finance', 'healthcare', 'education', 'retail', 'manufacturing', 'government', 'media', 'other' ])
+param claudeIndustry string = 'technology'
+
+@description('Email for the cost alert. Empty = no budget.')
+param budgetEmail string = ''
+
+@description('Monthly budget in your billing currency; alerts at 50% actual and 100% forecast.')
+param budgetAmount int = 1
+
+@description('First day of the current month; budgets cannot start in the past. Leave the default.')
+param budgetStartDate string = utcNow('yyyy-MM-01')
 
 @description('0 = scale to zero when idle (cheapest; ~10s cold start). 1 = always warm for a live demo.')
 @minValue(0)
@@ -39,11 +64,11 @@ param docIntelSku string = 'F0'
 
 var suffix = uniqueString(resourceGroup().id, appName)
 var tags = { app: appName, managedBy: 'bicep' }
-var hasAiKey = !empty(anthropicApiKey)
+var useFoundry = claudeMode == 'foundry'
+var useAnthropicKey = claudeMode == 'anthropic' && !empty(anthropicApiKey)
 var databaseName = 'renobudget'
 
 // Built-in role definition IDs
-var roleAcrPull = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 var roleBlobDataContributor = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 var roleKeyVaultSecretsUser = '4633458b-17de-408a-b874-0445c86b69e6'
 var roleCognitiveServicesUser = 'a97b65f3-24c7-4388-baec-2e87135dc908'
@@ -62,7 +87,8 @@ resource logs 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
   tags: tags
   properties: {
     sku: { name: 'PerGB2018' }
-    retentionInDays: 30
+    retentionInDays: 30                                  // 31 days are included free
+    workspaceCapping: { dailyQuotaGb: json('0.15') }     // ~4.5 GB/month, under the free 5 GB
   }
 }
 
@@ -74,27 +100,6 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   properties: {
     Application_Type: 'web'
     WorkspaceResourceId: logs.id
-  }
-}
-
-// ---------------------------------------------------------------------------- container registry
-resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
-  name: 'cr${appName}${suffix}'
-  location: location
-  tags: tags
-  sku: { name: 'Basic' }
-  properties: {
-    adminUserEnabled: false
-  }
-}
-
-resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: acr
-  name: guid(acr.id, identity.id, roleAcrPull)
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleAcrPull)
-    principalId: identity.properties.principalId
-    principalType: 'ServicePrincipal'
   }
 }
 
@@ -150,7 +155,7 @@ resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
-resource aiKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (hasAiKey) {
+resource aiKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (useAnthropicKey) {
   parent: vault
   name: 'anthropic-api-key'
   properties: { value: anthropicApiKey }
@@ -188,6 +193,60 @@ resource docIntelUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     principalId: identity.properties.principalId
     principalType: 'ServicePrincipal'
   }
+}
+
+// ---------------------------------------------------------------------------- claude on microsoft foundry (optional)
+// A Foundry (AIServices) account has no fixed fee; the Claude deployment bills per token through Azure Marketplace.
+resource foundry 'Microsoft.CognitiveServices/accounts@2025-10-01-preview' = if (useFoundry) {
+  name: 'ai-${appName}-${suffix}'
+  location: location
+  tags: tags
+  kind: 'AIServices'
+  sku: { name: 'S0' }
+  identity: { type: 'SystemAssigned' }
+  properties: {
+    customSubDomainName: 'ai-${appName}-${suffix}'
+    allowProjectManagement: true
+    disableLocalAuth: true                           // API keys off: Managed Identity only
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+resource foundryProject 'Microsoft.CognitiveServices/accounts/projects@2025-10-01-preview' = if (useFoundry) {
+  parent: foundry
+  name: appName
+  location: location
+  identity: { type: 'SystemAssigned' }
+  properties: {}
+}
+
+resource foundryUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (useFoundry) {
+  scope: foundry
+  name: guid(foundry.id, identity.id, roleCognitiveServicesUser)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleCognitiveServicesUser)
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource claude 'Microsoft.CognitiveServices/accounts/deployments@2025-10-01-preview' = if (useFoundry) {
+  parent: foundry
+  name: claudeModel
+  sku: { name: 'GlobalStandard', capacity: 25 }      // 25k tokens/minute
+  properties: {
+    model: { format: 'Anthropic', name: claudeModel, version: '1' }
+    // Not yet in Bicep's type definitions; same shape as Microsoft's Claude starter kit (Azure-Samples/claude).
+    #disable-next-line BCP037
+    modelProviderData: {
+      organizationName: claudeOrganizationName
+      countryCode: claudeCountryCode
+      industry: claudeIndustry
+    }
+    versionUpgradeOption: 'OnceNewDefaultVersionAvailable'
+    raiPolicyName: 'Microsoft.DefaultV2'
+  }
+  dependsOn: [ foundryProject, foundryUser ]
 }
 
 // ---------------------------------------------------------------------------- azure sql
@@ -258,10 +317,14 @@ var baseEnv = [
   { name: 'Storage__BlobEndpoint', value: storage.properties.primaryEndpoints.blob }
   { name: 'Storage__Container', value: uploadsContainer.name }
   { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
-  { name: 'Llm__Provider', value: hasAiKey ? 'anthropic' : 'ollama' }
   { name: 'DocumentIntelligence__Endpoint', value: docIntel.properties.endpoint }
+  { name: 'Anthropic__Model', value: claudeModel }
+  // 'ollama' has no server in Azure, so with claudeMode=off the assistant answers 503 "unavailable".
+  { name: 'Llm__Provider', value: useFoundry ? 'foundry' : (useAnthropicKey ? 'anthropic' : 'ollama') }
 ]
-var aiEnv = hasAiKey ? [ { name: 'Anthropic__ApiKey', secretRef: 'anthropic-api-key' } ] : []
+var aiEnv = useFoundry
+  ? [ { name: 'Foundry__Resource', value: foundry.name } ]
+  : (useAnthropicKey ? [ { name: 'Anthropic__ApiKey', secretRef: 'anthropic-api-key' } ] : [])
 
 resource app 'Microsoft.App/containerApps@2024-03-01' = if (!empty(containerImage)) {
   name: 'ca-${appName}'
@@ -280,8 +343,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (!empty(containerImag
         transport: 'auto'
         allowInsecure: false
       }
-      registries: [ { server: acr.properties.loginServer, identity: identity.id } ]
-      secrets: hasAiKey ? [ { name: 'anthropic-api-key', keyVaultUrl: aiKeySecret!.properties.secretUri, identity: identity.id } ] : []
+      secrets: useAnthropicKey ? [ { name: 'anthropic-api-key', keyVaultUrl: aiKeySecret!.properties.secretUri, identity: identity.id } ] : []
     }
     template: {
       containers: [
@@ -304,11 +366,25 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (!empty(containerImag
       }
     }
   }
-  dependsOn: [ acrPull, blobDataContributor, vaultSecretsUser, docIntelUser, sqlAllowAzure, sqlDb ]
+  dependsOn: [ blobDataContributor, vaultSecretsUser, docIntelUser, foundryUser, claude, sqlAllowAzure, sqlDb ]
 }
 
-output acrName string = acr.name
-output acrLoginServer string = acr.properties.loginServer
+// ---------------------------------------------------------------------------- cost guard
+// Budgets are free. Azure emails before money is spent: at 50% of actual spend and at 100% forecast.
+resource budget 'Microsoft.Consumption/budgets@2023-11-01' = if (!empty(budgetEmail)) {
+  name: 'budget-${appName}'
+  properties: {
+    category: 'Cost'
+    amount: budgetAmount
+    timeGrain: 'Monthly'
+    timePeriod: { startDate: budgetStartDate }
+    notifications: {
+      actual50: { enabled: true, operator: 'GreaterThanOrEqualTo', threshold: 50, thresholdType: 'Actual', contactEmails: [ budgetEmail ] }
+      forecast100: { enabled: true, operator: 'GreaterThanOrEqualTo', threshold: 100, thresholdType: 'Forecasted', contactEmails: [ budgetEmail ] }
+    }
+  }
+}
+
 output containerAppName string = !empty(containerImage) ? app!.name : ''
 output appUrl string = !empty(containerImage) ? 'https://${app!.properties.configuration.ingress.fqdn}' : ''
 output identityClientId string = identity.properties.clientId

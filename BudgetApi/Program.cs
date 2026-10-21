@@ -82,10 +82,11 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
 builder.Services.AddAuthorization();
 
 var llmProvider = (builder.Configuration["Llm:Provider"] ?? "ollama").ToLowerInvariant();
-if (llmProvider == "anthropic")
+if (llmProvider is "anthropic" or "foundry")
 {
-    builder.Services.AddHttpClient<AnthropicLlmClient>();
-    builder.Services.AddScoped<ILlmClient>(sp => sp.GetRequiredService<AnthropicLlmClient>());
+    // One SDK client for the app's lifetime (it pools connections and caches the Entra token).
+    builder.Services.AddSingleton<AnthropicLlmClient>();
+    builder.Services.AddSingleton<ILlmClient>(sp => sp.GetRequiredService<AnthropicLlmClient>());
 }
 else
 {

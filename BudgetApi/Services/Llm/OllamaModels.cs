@@ -19,6 +19,8 @@ public class OllamaMessage
     [JsonPropertyName("tool_calls"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public List<OllamaToolCall>? ToolCalls { get; set; }
     [JsonIgnore] public string? ToolUseId { get; set; }
+    // Provider-native content to replay verbatim on the next hop (Claude's thinking + tool_use blocks).
+    [JsonIgnore] public object? ProviderContent { get; set; }
 }
 
 public class OllamaTool

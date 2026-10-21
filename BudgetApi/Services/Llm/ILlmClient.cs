@@ -8,3 +8,6 @@ public interface ILlmClient
         List<OllamaTool>? tools = null,
         CancellationToken ct = default);
 }
+
+/// <summary>The model is configured but can't serve the request right now (network, rate limit, sign-in).</summary>
+public class LlmUnavailableException(string message, Exception inner) : Exception(message, inner);

@@ -11,6 +11,7 @@ into a configuration switch rather than a fork of the code, so the same image ru
 | File uploads | `Files:Root` folder | Blob Storage via `IFileStore` | `Services/Storage/` |
 | Auth cookie keys | in-memory/user profile | Persisted to Blob so restarts/redeploys don't log users out | `Program.cs` Data Protection |
 | Receipt/invoice reading | Tesseract OCR + local LLM | Azure AI Document Intelligence prebuilt models, local pipeline as fallback | `Services/Receipts/DocumentIntelligenceExtractor.cs` |
+| AI assistant | Ollama (free, local) | Claude via the Anthropic SDK: Microsoft Foundry with managed identity, or Claude API; off by default to stay at $0 | `Services/Llm/AnthropicLlmClient.cs` |
 | Secrets | appsettings / env | Key Vault reference on the Container App | `infra/main.bicep` |
 | Telemetry | console logs | OpenTelemetry → Application Insights | `UseAzureMonitor()` |
 | Health | – | `/healthz` (liveness), `/healthz/ready` (DB reachable) | `Program.cs`, container probes |
@@ -61,40 +62,58 @@ Tesseract OCR and tells the user, so an outage degrades the feature instead of b
 *Trade-off:* each page costs money beyond the free 500 pages/month, and documents leave the app for Azure
 (same region, not used for training), which matters for the privacy conversation.
 
-**AI assistant in the cloud.** Locally it uses Ollama. In Azure it uses the Anthropic API when
-`ANTHROPIC_API_KEY` is supplied at deploy time (stored in Key Vault); without a key the core app works
-and the AI features report that they're unavailable.
+**AI assistant: Claude, behind one interface.** The assistant answers questions by calling the app's own tools
+(list projects, add an expense, schedule a task...). `ILlmClient` hides the model, so the same loop runs on:
+
+* **Ollama** on a laptop: free and local.
+* **Claude on Microsoft Foundry** (`claudeMode=foundry`): Claude deployed in my Azure subscription and billed through
+  Azure. The app signs in with its managed identity (Entra ID token, scope `https://ai.azure.com/.default`,
+  *Cognitive Services User* role); keys are disabled on the account.
+* **Claude API** (`claudeMode=anthropic`): an API key held in Key Vault.
+
+Both Claude paths use the official Anthropic C# SDK (`Anthropic.Foundry` for Azure). Details that matter:
+the system prompt and tool list are marked for prompt caching (they are identical on every turn); Claude's thinking
+blocks are replayed unchanged between tool calls, which current models require; rate limits, outages and sign-in
+failures become a 503 "assistant unavailable" instead of a crash; a refusal gets a polite reply.
+*Trade-off:* Claude is billed per token on both paths, so it is **off by default** and the deployed demo stays free.
+Claude on Foundry also needs a pay-as-you-go subscription (not free trial or credit-only).
 
 ## Deploy
 
-Prerequisites: Azure subscription, [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli).
+Prerequisites: Azure subscription, [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), and a
+public image in GitHub Container Registry (the Deploy workflow pushes one; or set `GHCR_OWNER` and the script builds it
+with Docker).
 
 ```bash
 az login
-scripts/azure-deploy.sh rg-renobudget eastus2            # ~8 minutes on first run
-MIN_REPLICAS=1 scripts/azure-deploy.sh                   # keep warm before a live demo
-az group delete -n rg-renobudget --yes --no-wait         # tear down; stops all charges
+export BUDGET_EMAIL=you@example.com                      # cost alert, strongly recommended
+IMAGE=ghcr.io/<owner>/renobudget:<tag> scripts/azure-deploy.sh rg-renobudget eastus2   # ~8 minutes
+MIN_REPLICAS=1 IMAGE=... scripts/azure-deploy.sh         # keep warm for the hour of a live demo, then redeploy with 0
+az group delete -n rg-renobudget --yes --no-wait         # tear down
 ```
 
-The script deploys infrastructure, builds the image in Azure Container Registry, deploys the
-Container App, waits for readiness, and runs the smoke test against the live URL.
+The script deploys the infrastructure and the Container App, waits for readiness, and runs the smoke test against
+the live URL.
 
-### Expected cost (idle demo, scale-to-zero)
+### Cost: designed for $0
 
-| Resource | Cost |
+| Resource | Why it is free |
 |---|---|
-| Container Apps | Free grant covers a demo (180k vCPU-s/month) |
-| Azure SQL serverless | Free offer (pauses rather than bills when exhausted) |
-| Storage, Key Vault, Log Analytics | Cents |
-| AI Document Intelligence F0 | Free, 500 pages/month (one F0 per subscription; `DOC_INTEL_SKU=S0` otherwise) |
-| Container Registry Basic | ~$5/month, the only fixed cost |
+| Container Apps | Scales to zero; the monthly free grant (180k vCPU-s, 2M requests) covers a demo. Don't leave `MIN_REPLICAS=1` on: always-on uses up the grant in about 4 days |
+| Azure SQL serverless | Free offer, 100k vCore-s/month; set to pause, not bill, when it runs out |
+| AI Document Intelligence F0 | 500 pages/month (one F0 per subscription; `DOC_INTEL_SKU=S0` is paid) |
+| Log Analytics + App Insights | First 5 GB/month free; ingestion capped at 0.15 GB/day in the template |
+| Storage, Key Vault | Pay per use; a demo's few MB and few reads round to $0.00 |
+| Container image | GitHub Container Registry, free for public images (replaced Azure Container Registry, ~$5/month) |
+| Budget alert | Free; emails at 50% of a $1 budget and when spend is forecast to pass it |
+| Claude (optional) | **Paid per token**, so `claudeMode=off` by default. A Claude.ai subscription does not include API usage |
 
 ## CI/CD (GitHub Actions)
 
 * `ci.yml`, on every push/PR: build API, type-check and build web, lint Bicep, then start the real
   container against SQL Server and Azurite with `docker compose` and run `scripts/smoke-api.sh`.
-* `deploy.yml`, after CI passes on `main`: OIDC login, `az acr build`, roll out a new Container App
-  revision, smoke test production.
+* `deploy.yml`, after CI passes on `main`: build and push the image to GitHub Container Registry (with the
+  workflow's own token), OIDC login to Azure, roll out a new Container App revision, smoke test production.
 
 One-time setup for `deploy.yml`:
 
@@ -109,7 +128,8 @@ az role assignment create --assignee "$APP_ID" --role Contributor \
 ```
 
 Then in GitHub: create environment `production`; add secrets `AZURE_CLIENT_ID` (=`$APP_ID`),
-`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`; add variables `AZURE_RESOURCE_GROUP`, `AZURE_ACR_NAME`.
+`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`; add variable `AZURE_RESOURCE_GROUP`. After the first push, make the
+`renobudget` package public (GitHub → Packages → Settings) so Container Apps can pull it without credentials.
 
 ## Interview demo script (~5 minutes)
 
@@ -125,7 +145,10 @@ Then in GitHub: create environment `production`; add secrets `AZURE_CLIENT_ID` (
    end-to-end trace: HTTP → Document Intelligence → SQL → Blob.
 5. **Infrastructure as code:** walk through `infra/main.bicep` top to bottom (the diagram at the top).
 6. **Pipeline:** show a green CI run where the container was tested against SQL Server + Azurite.
-7. **Talk trade-offs:** pick two from "Design decisions" above.
+7. **Cost:** Cost Management → Budgets shows the $1 alert; walk the "designed for $0" table.
+8. **AI assistant:** show `AnthropicLlmClient.cs` (one SDK, Foundry or Claude API) and the tests that check the
+   request carries an Entra token and no key. Run the assistant live on the laptop with Ollama.
+9. **Talk trade-offs:** pick two from "Design decisions" above.
 
 ## Testing Document Intelligence
 
@@ -134,3 +157,12 @@ Then in GitHub: create environment `production`; add secrets `AZURE_CLIENT_ID` (
 * Against the real service from a laptop: `az login`, give yourself the *Cognitive Services User* role on the
   resource, then `DocumentIntelligence__Endpoint=https://<name>.cognitiveservices.azure.com/ dotnet run` in
   `BudgetApi/`. `DefaultAzureCredential` uses your CLI login, so there is still no key.
+
+## Testing the Claude client (no API spend)
+
+* `dotnet test tests/BudgetApi.Tests` runs the real Anthropic SDK against a stub HTTP handler (`ClaudeClientTests`):
+  Foundry requests go to `https://<resource>.services.ai.azure.com/anthropic/v1/messages` with an Entra bearer token
+  and no API key; the tool loop replays Claude's thinking and `tool_use` blocks and batches the tool results;
+  refusals, 429s and 5xx are handled.
+* Against Claude on Foundry from a laptop: `az login`, give yourself *Cognitive Services User* on the Foundry account,
+  then `Llm__Provider=foundry Foundry__Resource=<account> dotnet run` in `BudgetApi/`.
