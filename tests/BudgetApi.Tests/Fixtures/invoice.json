@@ -1,0 +1,38 @@
+{
+  "apiVersion": "2024-11-30",
+  "modelId": "prebuilt-invoice",
+  "stringIndexType": "textElements",
+  "content": "Harbor Electric LLC\nINVOICE #INV-2291\nDate: 09/28/2026\nRough-in wiring, kitchen 16 hrs 85.00 1,360.00\n20A GFCI receptacles 6 24.50 147.00\nPermit fee 1 175.00 175.00\nTOTAL $1,682.00",
+  "pages": [],
+  "documents": [
+    {
+      "docType": "invoice",
+      "spans": [ { "offset": 0, "length": 170 } ],
+      "confidence": 1.0,
+      "fields": {
+        "VendorName": { "type": "string", "valueString": "Harbor Electric LLC", "content": "Harbor Electric LLC", "confidence": 0.94 },
+        "InvoiceId": { "type": "string", "valueString": "INV-2291", "content": "INV-2291", "confidence": 0.97 },
+        "InvoiceDate": { "type": "date", "valueDate": "2026-09-28", "content": "09/28/2026", "confidence": 0.98 },
+        "InvoiceTotal": { "type": "currency", "valueCurrency": { "amount": 1682.0, "currencySymbol": "$", "currencyCode": "USD" }, "content": "$1,682.00", "confidence": 0.96 },
+        "Items": {
+          "type": "array",
+          "valueArray": [
+            { "type": "object", "content": "Rough-in wiring, kitchen 16 hrs 85.00 1,360.00", "confidence": 0.93, "valueObject": {
+              "Description": { "type": "string", "valueString": "Rough-in wiring, kitchen", "content": "Rough-in wiring, kitchen", "confidence": 0.92 },
+              "Quantity": { "type": "number", "valueNumber": 16, "content": "16", "confidence": 0.9 },
+              "UnitPrice": { "type": "currency", "valueCurrency": { "amount": 85.0, "currencySymbol": "$" }, "content": "85.00", "confidence": 0.91 },
+              "Amount": { "type": "currency", "valueCurrency": { "amount": 1360.0, "currencySymbol": "$" }, "content": "1,360.00", "confidence": 0.95 } } },
+            { "type": "object", "content": "20A GFCI receptacles 6 24.50 147.00", "confidence": 0.92, "valueObject": {
+              "Description": { "type": "string", "valueString": "20A GFCI receptacles", "content": "20A GFCI receptacles", "confidence": 0.9 },
+              "Quantity": { "type": "number", "valueNumber": 6, "content": "6", "confidence": 0.9 },
+              "UnitPrice": { "type": "currency", "valueCurrency": { "amount": 24.5, "currencySymbol": "$" }, "content": "24.50", "confidence": 0.9 },
+              "Amount": { "type": "currency", "valueCurrency": { "amount": 147.0, "currencySymbol": "$" }, "content": "147.00", "confidence": 0.94 } } },
+            { "type": "object", "content": "Permit fee 1 175.00 175.00", "confidence": 0.9, "valueObject": {
+              "Description": { "type": "string", "valueString": "Permit fee", "content": "Permit fee", "confidence": 0.9 },
+              "Amount": { "type": "currency", "valueCurrency": { "amount": 175.0, "currencySymbol": "$" }, "content": "175.00", "confidence": 0.93 } } }
+          ]
+        }
+      }
+    }
+  ]
+}

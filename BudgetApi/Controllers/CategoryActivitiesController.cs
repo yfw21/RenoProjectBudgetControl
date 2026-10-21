@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using BudgetApi.Data;
@@ -6,6 +7,7 @@ using BudgetApi.Models;
 namespace BudgetApi.Controllers
 {
     [ApiController]
+    [Authorize]
     [Route("api/[controller]")]
     public class CategoryActivitiesController : ControllerBase
     {

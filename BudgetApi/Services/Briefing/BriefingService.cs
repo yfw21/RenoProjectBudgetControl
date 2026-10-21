@@ -16,7 +16,7 @@ public class BriefingService
     {
         using var scope = _sp.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<BudgetContext>();
-        var ollama = scope.ServiceProvider.GetRequiredService<OllamaClient>();
+        var llm = scope.ServiceProvider.GetRequiredService<ILlmClient>();
 
         var project = await db.Projects.FindAsync(new object?[] { projectId }, ct);
         if (project == null) return "";
@@ -51,7 +51,7 @@ public class BriefingService
         };
         try
         {
-            var resp = await ollama.ChatAsync(messages, null, ct);
+            var resp = await llm.ChatAsync(messages, null, ct);
             return resp.Message.Content;
         }
         catch (Exception e)

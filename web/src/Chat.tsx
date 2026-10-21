@@ -48,7 +48,8 @@ export function Chat({ user, onLogout }: { user: User; onLogout: () => void }) {
         body: JSON.stringify({ message: text, history }),
       })
       if (!r.ok) {
-        setMsgs(m => [...m, { role: 'bot', content: `Error (${r.status}).` }])
+        const err = await r.json().catch(() => null)
+        setMsgs(m => [...m, { role: 'bot', content: err?.error ?? `Error (${r.status}).` }])
         return
       }
       const data = await r.json()

@@ -1,0 +1,53 @@
+name: Deploy to Azure
+
+# Runs after CI passes on main. Signs in to Azure with OpenID Connect (federated credential),
+# so no Azure password or secret is stored in GitHub. One-time setup: docs/AZURE.md.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  packages: write   # push the image to GitHub Container Registry (free, no Azure registry needed)
+
+concurrency: deploy-production
+
+jobs:
+  deploy:
+    # Skips until Azure is connected (scripts/github-setup.sh azure sets AZURE_RESOURCE_GROUP).
+    if: vars.AZURE_RESOURCE_GROUP != '' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+      APP: ca-renobudget
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: '${{ github.event.workflow_run.head_sha || github.sha }}' }
+
+      - name: Build and push image to GitHub Container Registry
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/renobudget:$(git rev-parse --short HEAD)"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Roll out new revision
+        run: az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" -o none
+
+      - name: Smoke test production
+        run: |
+          URL="https://$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)"
+          for _ in $(seq 1 40); do curl -fs -o /dev/null --max-time 10 "$URL/healthz/ready" && break; sleep 6; done
+          scripts/smoke-api.sh "$URL"

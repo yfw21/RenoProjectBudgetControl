@@ -4,6 +4,7 @@ using System.Security.Claims;
 using BudgetApi.Data;
 using BudgetApi.Models;
 using BudgetApi.Services.Rag;
+using BudgetApi.Services.Storage;
 
 namespace BudgetApi.Controllers;
 
@@ -14,12 +15,12 @@ public class FilesController : ControllerBase
 {
     private readonly BudgetContext _db;
     private readonly Embedder _embedder;
-    private readonly IConfiguration _cfg;
+    private readonly IFileStore _store;
     private readonly ILogger<FilesController> _log;
 
-    public FilesController(BudgetContext db, Embedder embedder, IConfiguration cfg, ILogger<FilesController> log)
+    public FilesController(BudgetContext db, Embedder embedder, IFileStore store, ILogger<FilesController> log)
     {
-        _db = db; _embedder = embedder; _cfg = cfg; _log = log;
+        _db = db; _embedder = embedder; _store = store; _log = log;
     }
 
     [HttpPost]
@@ -28,12 +29,7 @@ public class FilesController : ControllerBase
     {
         if (file is null || file.Length == 0) return BadRequest(new { error = "file required" });
         var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "0");
-        var storeRoot = _cfg["Files:Root"] ?? Path.Combine(AppContext.BaseDirectory, "uploads");
-        Directory.CreateDirectory(storeRoot);
-        var safeName = $"{Guid.NewGuid():N}_{Path.GetFileName(file.FileName)}";
-        var fullPath = Path.Combine(storeRoot, safeName);
-        await using (var fs = System.IO.File.Create(fullPath))
-            await file.CopyToAsync(fs, ct);
+        var key = await _store.SaveAsync(file, ct);
 
         var blob = new FileBlob
         {
@@ -41,7 +37,7 @@ public class FilesController : ControllerBase
             UploadedByUserId = userId,
             FileName = file.FileName,
             ContentType = file.ContentType ?? "application/octet-stream",
-            StoragePath = fullPath,
+            StoragePath = key,
             SizeBytes = file.Length,
             Kind = kind ?? "other"
         };
@@ -53,7 +49,8 @@ public class FilesController : ControllerBase
             file.FileName.EndsWith(".txt", StringComparison.OrdinalIgnoreCase) ||
             file.FileName.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
         {
-            text = await System.IO.File.ReadAllTextAsync(fullPath, ct);
+            using var reader = new StreamReader(file.OpenReadStream());
+            text = await reader.ReadToEndAsync(ct);
         }
 
         Note? note = null;
@@ -70,10 +67,12 @@ public class FilesController : ControllerBase
     }
 
     [HttpGet("{id}")]
-    public async Task<IActionResult> Get(int id)
+    public async Task<IActionResult> Get(int id, CancellationToken ct)
     {
-        var blob = await _db.FileBlobs.FindAsync(id);
-        if (blob is null || !System.IO.File.Exists(blob.StoragePath)) return NotFound();
-        return PhysicalFile(blob.StoragePath, blob.ContentType, blob.FileName);
+        var blob = await _db.FileBlobs.FindAsync(new object?[] { id }, ct);
+        if (blob is null) return NotFound();
+        var stream = await _store.OpenReadAsync(blob.StoragePath, ct);
+        if (stream is null) return NotFound();
+        return File(stream, blob.ContentType, blob.FileName);
     }
 }

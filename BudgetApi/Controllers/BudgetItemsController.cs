@@ -1,11 +1,14 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using BudgetApi.Data;
 using BudgetApi.Models;
+using BudgetApi.Services.Storage;
 
 namespace BudgetApi.Controllers
 {
     [ApiController]
+    [Authorize]
     [Route("api/[controller]")]
     public class BudgetItemsController : ControllerBase
     {
@@ -114,7 +117,7 @@ namespace BudgetApi.Controllers
         /// </summary>
         [HttpPost("batch")]
         [RequestSizeLimit(20_000_000)]
-        public async Task<IActionResult> CreateBatch([FromForm] string payload, IFormFile? file)
+        public async Task<IActionResult> CreateBatch([FromForm] string payload, IFormFile? file, [FromServices] IFileStore store)
         {
             BatchRequest? req;
             try { req = System.Text.Json.JsonSerializer.Deserialize<BatchRequest>(payload,
@@ -126,18 +129,13 @@ namespace BudgetApi.Controllers
             int? receiptBlobId = null;
             if (file != null && file.Length > 0)
             {
-                var storeRoot = HttpContext.RequestServices.GetRequiredService<IConfiguration>()["Files:Root"]
-                    ?? Path.Combine(AppContext.BaseDirectory, "uploads");
-                Directory.CreateDirectory(storeRoot);
-                var safeName = $"{Guid.NewGuid():N}_{Path.GetFileName(file.FileName)}";
-                var fullPath = Path.Combine(storeRoot, safeName);
-                await using (var fs = System.IO.File.Create(fullPath)) await file.CopyToAsync(fs);
+                var key = await store.SaveAsync(file);
                 var blob = new FileBlob
                 {
                     ProjectId = req.ProjectId,
                     FileName = file.FileName,
                     ContentType = file.ContentType ?? "application/octet-stream",
-                    StoragePath = fullPath,
+                    StoragePath = key,
                     SizeBytes = file.Length,
                     Kind = "receipt"
                 };
@@ -200,25 +198,20 @@ namespace BudgetApi.Controllers
 
         [HttpPost("{id}/receipt")]
         [RequestSizeLimit(20_000_000)]
-        public async Task<IActionResult> AttachReceipt(int id, IFormFile file, IConfiguration cfg)
+        public async Task<IActionResult> AttachReceipt(int id, IFormFile file, [FromServices] IFileStore store)
         {
             if (file == null || file.Length == 0) return BadRequest(new { error = "file required" });
             var item = await _context.BudgetItems.FindAsync(id);
             if (item == null) return NotFound();
 
-            var storeRoot = cfg["Files:Root"] ?? Path.Combine(AppContext.BaseDirectory, "uploads");
-            Directory.CreateDirectory(storeRoot);
-            var safeName = $"{Guid.NewGuid():N}_{Path.GetFileName(file.FileName)}";
-            var fullPath = Path.Combine(storeRoot, safeName);
-            await using (var fs = System.IO.File.Create(fullPath))
-                await file.CopyToAsync(fs);
+            var key = await store.SaveAsync(file);
 
             var blob = new FileBlob
             {
                 ProjectId = item.ProjectId,
                 FileName = file.FileName,
                 ContentType = file.ContentType ?? "application/octet-stream",
-                StoragePath = fullPath,
+                StoragePath = key,
                 SizeBytes = file.Length,
                 Kind = "receipt"
             };

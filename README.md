@@ -1,0 +1,47 @@
+# Reno Budget Control
+
+A renovation project manager for contractors: budgets and expenses, receipt and invoice capture with OCR,
+scheduling with resource-conflict detection, materials and purchase orders, Excel/PDF reports, and an AI
+assistant that works through the same data with tool calls.
+
+**Stack:** ASP.NET Core 8 · EF Core · React 18 + TypeScript (Vite) · xUnit · Playwright · Docker · Azure (Container Apps,
+Azure SQL, Blob Storage, AI Document Intelligence, Key Vault, Application Insights) · Claude (Anthropic SDK; Microsoft
+Foundry or Claude API) · Bicep · GitHub Actions
+
+```mermaid
+flowchart LR
+  U[Browser] -- HTTPS --> CA
+  subgraph Azure resource group
+    CA["Container App<br/>ASP.NET Core API + React SPA"]
+    MI(("Managed<br/>Identity"))
+    SQL[(Azure SQL<br/>serverless)]
+    BLOB[(Blob Storage<br/>receipts + key ring)]
+    KV[Key Vault]
+    DI[AI Document<br/>Intelligence]
+    CL["Claude on<br/>Microsoft Foundry<br/>(optional)"]
+    AI[Application Insights]
+    BUD[Budget alert]
+    CA --- MI
+    MI -- Entra auth --> SQL
+    MI -- RBAC --> BLOB
+    MI -- RBAC --> KV
+    MI -- RBAC --> DI
+    MI -. RBAC .-> CL
+    CA -- OpenTelemetry --> AI
+  end
+  GH[GitHub Actions] -- image --> GHCR[GitHub Container<br/>Registry]
+  GHCR -- public image --> CA
+  GH -- OIDC, no secrets --> CA
+```
+
+## Run it
+
+| Mode | Command | Uses |
+|---|---|---|
+| Laptop | `cd BudgetApi && dotnet run` (+ `cd web && npm run dev`) | SQLite, local disk, Ollama (free, local AI) |
+| Cloud on a laptop | `docker compose up --build` → http://localhost:8080 | SQL Server + Azurite: the same code paths as Azure |
+| Azure | `az login && IMAGE=… BUDGET_EMAIL=… scripts/azure-deploy.sh` | Everything in the diagram, at $0 by default |
+
+Then verify any of them with `scripts/smoke-api.sh <url>`. Unit tests: `dotnet test tests/BudgetApi.Tests`.
+
+The cloud design, decisions, costs and CI/CD setup are in [docs/AZURE.md](docs/AZURE.md).

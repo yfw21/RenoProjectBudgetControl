@@ -1,45 +1,74 @@
-using System.Net.Http.Json;
-using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
+using Anthropic;
+using Anthropic.Exceptions;
+using Anthropic.Foundry;
+using Anthropic.Models.Messages;
+using Azure.Core;
+using Azure.Identity;
 
 namespace BudgetApi.Services.Llm;
 
+/// <summary>
+/// Claude through the official Anthropic SDK. Two backends, same Messages API:
+///   Llm:Provider = anthropic  -> api.anthropic.com with an API key
+///   Llm:Provider = foundry    -> Claude deployed in Microsoft Foundry (Azure), signed in with
+///                                Entra ID (managed identity in Azure, `az login` on a laptop): no key
+/// </summary>
 public class AnthropicLlmClient : ILlmClient
 {
-    private readonly HttpClient _http;
+    private readonly IAnthropicClient _client;
     private readonly string _model;
     private readonly int _maxTokens;
+    private readonly string _effort;
+    private readonly ILogger<AnthropicLlmClient> _log;
 
     public string ModelName => _model;
 
-    public AnthropicLlmClient(HttpClient http, IConfiguration cfg)
+    public AnthropicLlmClient(IConfiguration cfg, ILogger<AnthropicLlmClient> log)
+        : this(CreateClient(cfg), cfg, log) { }
+
+    public AnthropicLlmClient(IAnthropicClient client, IConfiguration cfg, ILogger<AnthropicLlmClient> log)
     {
-        var baseUrl = cfg["Anthropic:BaseUrl"] ?? "https://api.anthropic.com";
-        _model = cfg["Anthropic:Model"] ?? "claude-sonnet-4-6";
-        _maxTokens = int.TryParse(cfg["Anthropic:MaxTokens"], out var m) ? m : 4096;
+        _client = client;
+        _log = log;
+        _model = cfg["Anthropic:Model"] ?? "claude-opus-5-5";
+        _maxTokens = int.TryParse(cfg["Anthropic:MaxTokens"], out var m) ? m : 16000;
+        _effort = cfg["Anthropic:Effort"] ?? "medium";
+    }
+
+    public static IAnthropicClient CreateClient(IConfiguration cfg, TokenCredential? credential = null)
+    {
+        var timeout = TimeSpan.FromMinutes(5);
+        if (string.Equals(cfg["Llm:Provider"], "foundry", StringComparison.OrdinalIgnoreCase))
+        {
+            var resource = cfg["Foundry:Resource"]
+                ?? throw new InvalidOperationException("Foundry:Resource (the Foundry account name) is not configured.");
+            // In Azure AZURE_CLIENT_ID selects the app's user-assigned identity; locally this falls back to `az login`.
+            credential ??= new DefaultAzureCredential(new DefaultAzureCredentialOptions
+            {
+                ManagedIdentityClientId = cfg["AZURE_CLIENT_ID"]
+            });
+            IAnthropicClient foundry = new AnthropicFoundryClient(new AnthropicFoundryIdentityTokenCredentials(credential, resource))
+            {
+                Timeout = timeout,
+                MaxRetries = 2
+            };
+            // Optional override, e.g. a private endpoint or an API Management gateway in front of Foundry.
+            var baseUrl = cfg["Foundry:BaseUrl"];
+            return string.IsNullOrEmpty(baseUrl) ? foundry : foundry.WithOptions(o => o with { BaseUrl = baseUrl });
+        }
 
         var apiKey = cfg["Anthropic:ApiKey"]
             ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")
             ?? throw new InvalidOperationException(
                 "Anthropic API key not configured. Set ANTHROPIC_API_KEY env var or Anthropic:ApiKey in appsettings.json.");
-
-        _http = http;
-        _http.BaseAddress = new Uri(baseUrl);
-        _http.Timeout = TimeSpan.FromMinutes(5);
-        _http.DefaultRequestHeaders.Add("x-api-key", apiKey);
-        _http.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
-    }
-
-    private class AnthropicRequest
-    {
-        [JsonPropertyName("model")] public string Model { get; set; } = "";
-        [JsonPropertyName("max_tokens")] public int MaxTokens { get; set; }
-        [JsonPropertyName("system"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public object? System { get; set; }
-        [JsonPropertyName("tools"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public object? Tools { get; set; }
-        [JsonPropertyName("messages")] public List<object> Messages { get; set; } = new();
+        return new AnthropicClient
+        {
+            ApiKey = apiKey,
+            BaseUrl = cfg["Anthropic:BaseUrl"] ?? "https://api.anthropic.com",
+            Timeout = timeout,
+            MaxRetries = 2
+        };
     }
 
     public async Task<OllamaChatResponse> ChatAsync(
@@ -50,122 +79,143 @@ public class AnthropicLlmClient : ILlmClient
         var systemText = string.Join("\n\n",
             messages.Where(m => m.Role == "system").Select(m => m.Content));
 
-        var anthMessages = new List<object>();
-        foreach (var m in messages.Where(x => x.Role != "system"))
+        var parameters = new MessageCreateParams
         {
-            if (m.Role == "user")
+            Model = _model,
+            MaxTokens = _maxTokens,
+            OutputConfig = new OutputConfig { Effort = _effort },
+            Messages = ToClaudeMessages(messages.Where(x => x.Role != "system")),
+        };
+        if (!string.IsNullOrEmpty(systemText))
+        {
+            // The system prompt and tool list are identical on every turn, so they are cached.
+            parameters = parameters with
             {
-                anthMessages.Add(new { role = "user", content = m.Content });
-            }
-            else if (m.Role == "assistant")
-            {
-                if (m.ToolCalls is null || m.ToolCalls.Count == 0)
+                System = new List<TextBlockParam>
                 {
-                    anthMessages.Add(new { role = "assistant", content = m.Content });
+                    new() { Text = systemText, CacheControl = new CacheControlEphemeral() }
                 }
+            };
+        }
+        if (tools is { Count: > 0 })
+            parameters = parameters with { Tools = tools.Select(ToClaudeTool).ToList() };
+
+        Message response;
+        try
+        {
+            response = await _client.Messages.Create(parameters, ct);
+        }
+        catch (AnthropicRateLimitException e)
+        {
+            throw new LlmUnavailableException("Claude is rate limited right now; try again shortly.", e);
+        }
+        catch (Anthropic5xxException e)
+        {
+            throw new LlmUnavailableException("Claude is temporarily unavailable.", e);
+        }
+        catch (AnthropicIOException e)
+        {
+            throw new LlmUnavailableException("Claude could not be reached.", e);
+        }
+        catch (AuthenticationFailedException e)
+        {
+            throw new LlmUnavailableException("Could not sign in to Claude on Microsoft Foundry (managed identity / az login).", e);
+        }
+
+        _log.LogInformation(
+            "Claude {Model}: stop={Stop} in={In} out={Out} cacheRead={CacheRead}",
+            _model, response.StopReason, response.Usage.InputTokens, response.Usage.OutputTokens,
+            response.Usage.CacheReadInputTokens);
+
+        return FromClaudeMessage(response);
+    }
+
+    private static List<MessageParam> ToClaudeMessages(IEnumerable<OllamaMessage> messages)
+    {
+        var result = new List<MessageParam>();
+        foreach (var m in messages)
+        {
+            if (m.Role == "assistant")
+            {
+                // Replay Claude's own blocks unchanged (thinking blocks included) when we have them;
+                // plain-text history from the browser becomes a text turn.
+                if (m.ProviderContent is List<ContentBlockParam> blocks)
+                    result.Add(new() { Role = Role.Assistant, Content = blocks });
                 else
-                {
-                    var blocks = new List<object>();
-                    if (!string.IsNullOrWhiteSpace(m.Content))
-                        blocks.Add(new { type = "text", text = m.Content });
-                    foreach (var tc in m.ToolCalls)
-                    {
-                        blocks.Add(new
-                        {
-                            type = "tool_use",
-                            id = tc.Id ?? GenerateToolUseId(),
-                            name = tc.Function.Name,
-                            input = JsonSerializer.Deserialize<JsonElement>(tc.Function.Arguments.GetRawText())
-                        });
-                    }
-                    anthMessages.Add(new { role = "assistant", content = blocks });
-                }
+                    result.Add(new() { Role = Role.Assistant, Content = m.Content });
+                continue;
             }
-            else if (m.Role == "tool")
+
+            ContentBlockParam block = m.Role == "tool"
+                ? new ToolResultBlockParam { ToolUseID = m.ToolUseId ?? "", Content = m.Content }
+                : new TextBlockParam { Text = m.Content };
+
+            // Tool results for one assistant turn must arrive in a single user message.
+            if (result.Count > 0 && result[^1].Role == Role.User && result[^1].Content.TryPickContentBlockParams(out var prior))
+                result[^1] = result[^1] with { Content = prior.Append(block).ToList() };
+            else
+                result.Add(new() { Role = Role.User, Content = new List<ContentBlockParam> { block } });
+        }
+        return result;
+    }
+
+    private static ToolUnion ToClaudeTool(OllamaTool t)
+    {
+        var schema = JsonSerializer.SerializeToElement(t.Function.Parameters);
+        var properties = schema.TryGetProperty("properties", out var p)
+            ? p.EnumerateObject().ToDictionary(x => x.Name, x => x.Value.Clone())
+            : new Dictionary<string, JsonElement>();
+        var required = schema.TryGetProperty("required", out var r)
+            ? r.EnumerateArray().Select(x => x.GetString()!).ToList()
+            : new List<string>();
+        return new Tool
+        {
+            Name = t.Function.Name,
+            Description = t.Function.Description,
+            InputSchema = new() { Properties = properties, Required = required },
+        };
+    }
+
+    private OllamaChatResponse FromClaudeMessage(Message response)
+    {
+        var text = new System.Text.StringBuilder();
+        var toolCalls = new List<OllamaToolCall>();
+        var echo = new List<ContentBlockParam>();
+
+        foreach (var block in response.Content)
+        {
+            if (block.TryPickText(out var t))
             {
-                anthMessages.Add(new
+                text.Append(t.Text);
+                echo.Add(new TextBlockParam { Text = t.Text });
+            }
+            else if (block.TryPickThinking(out var thinking))
+            {
+                echo.Add(new ThinkingBlockParam { Thinking = thinking.Thinking, Signature = thinking.Signature });
+            }
+            else if (block.TryPickRedactedThinking(out var redacted))
+            {
+                echo.Add(new RedactedThinkingBlockParam { Data = redacted.Data });
+            }
+            else if (block.TryPickToolUse(out var toolUse))
+            {
+                echo.Add(new ToolUseBlockParam { ID = toolUse.ID, Name = toolUse.Name, Input = toolUse.Input });
+                toolCalls.Add(new OllamaToolCall
                 {
-                    role = "user",
-                    content = new[] {
-                        new {
-                            type = "tool_result",
-                            tool_use_id = m.ToolUseId ?? "",
-                            content = m.Content
-                        }
+                    Id = toolUse.ID,
+                    Function = new OllamaFunctionCall
+                    {
+                        Name = toolUse.Name,
+                        Arguments = JsonSerializer.SerializeToElement(toolUse.Input)
                     }
                 });
             }
         }
 
-        anthMessages = MergeConsecutiveUserMessages(anthMessages);
-
-        object? toolsObj = tools?.Select(t => (object)new
+        if (response.StopReason == StopReason.Refusal)
         {
-            name = t.Function.Name,
-            description = t.Function.Description,
-            input_schema = t.Function.Parameters
-        }).ToList();
-
-        object? systemObj = null;
-        if (!string.IsNullOrEmpty(systemText))
-        {
-            systemObj = new[] {
-                new {
-                    type = "text",
-                    text = systemText,
-                    cache_control = new { type = "ephemeral" }
-                }
-            };
-        }
-
-        var request = new AnthropicRequest
-        {
-            Model = _model,
-            MaxTokens = _maxTokens,
-            System = systemObj,
-            Tools = toolsObj,
-            Messages = anthMessages
-        };
-
-        var resp = await _http.PostAsJsonAsync("/v1/messages", request, ct);
-        var respJson = await resp.Content.ReadAsStringAsync(ct);
-        if (!resp.IsSuccessStatusCode)
-            throw new InvalidOperationException(
-                $"Anthropic API error {(int)resp.StatusCode}: {respJson}");
-
-        using var doc = JsonDocument.Parse(respJson);
-        var root = doc.RootElement;
-
-        var text = new StringBuilder();
-        var toolCalls = new List<OllamaToolCall>();
-
-        if (root.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var block in content.EnumerateArray())
-            {
-                var type = block.TryGetProperty("type", out var t) ? t.GetString() : null;
-                if (type == "text" && block.TryGetProperty("text", out var tx))
-                {
-                    text.Append(tx.GetString());
-                }
-                else if (type == "tool_use")
-                {
-                    var id = block.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
-                    var name = block.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : null;
-                    var input = block.TryGetProperty("input", out var inEl) ? inEl : default;
-                    toolCalls.Add(new OllamaToolCall
-                    {
-                        Id = id,
-                        Function = new OllamaFunctionCall
-                        {
-                            Name = name ?? "",
-                            Arguments = input.ValueKind == JsonValueKind.Undefined
-                                ? JsonDocument.Parse("{}").RootElement.Clone()
-                                : JsonDocument.Parse(input.GetRawText()).RootElement.Clone()
-                        }
-                    });
-                }
-            }
+            text.Clear().Append("I can't help with that request.");
+            toolCalls.Clear();
         }
 
         return new OllamaChatResponse
@@ -175,56 +225,10 @@ public class AnthropicLlmClient : ILlmClient
             {
                 Role = "assistant",
                 Content = text.ToString(),
-                ToolCalls = toolCalls.Count > 0 ? toolCalls : null
+                ToolCalls = toolCalls.Count > 0 ? toolCalls : null,
+                ProviderContent = toolCalls.Count > 0 ? echo : null
             },
             Done = true
         };
     }
-
-    private static List<object> MergeConsecutiveUserMessages(List<object> msgs)
-    {
-        if (msgs.Count < 2) return msgs;
-        var merged = new List<object>();
-        List<object>? pendingUserContent = null;
-
-        void Flush()
-        {
-            if (pendingUserContent is not null)
-            {
-                merged.Add(new { role = "user", content = pendingUserContent });
-                pendingUserContent = null;
-            }
-        }
-
-        foreach (var m in msgs)
-        {
-            var json = JsonSerializer.SerializeToElement(m);
-            var role = json.GetProperty("role").GetString();
-            if (role == "user")
-            {
-                var c = json.GetProperty("content");
-                pendingUserContent ??= new List<object>();
-                if (c.ValueKind == JsonValueKind.String)
-                {
-                    pendingUserContent.Add(new { type = "text", text = c.GetString() });
-                }
-                else if (c.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var item in c.EnumerateArray())
-                        pendingUserContent.Add(JsonSerializer.Deserialize<object>(item.GetRawText())!);
-                }
-            }
-            else
-            {
-                Flush();
-                merged.Add(m);
-            }
-        }
-        Flush();
-        return merged;
-    }
-
-    private static string GenerateToolUseId() =>
-        "toolu_" + Convert.ToBase64String(Guid.NewGuid().ToByteArray())
-            .Replace("/", "_").Replace("+", "-").TrimEnd('=').Substring(0, 22);
 }

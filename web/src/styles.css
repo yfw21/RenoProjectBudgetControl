@@ -113,6 +113,9 @@ table.data tr:hover td { background: var(--panel-2); }
 .banner-ok { background: rgba(63,185,80,0.10); border: 1px solid var(--success); color: var(--success); padding: 8px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 12px; }
 .req { color: var(--danger); font-size: 11px; margin-left: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
 .input-missing { border-color: var(--danger) !important; box-shadow: 0 0 0 1px var(--danger); }
+.input-unsure { border-color: var(--warning) !important; box-shadow: 0 0 0 1px var(--warning); }
+.conf { font-size: 11px; margin-left: 6px; padding: 1px 6px; border-radius: 10px; background: rgba(63,185,80,0.12); color: var(--success); font-weight: 500; }
+.conf-low { background: rgba(210,153,34,0.15); color: var(--warning); }
 
 /* receipts + toolbar */
 .toolbar { display: flex; gap: 6px; align-items: center; }

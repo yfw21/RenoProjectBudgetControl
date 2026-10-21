@@ -25,14 +25,37 @@ public class InvoiceLineExtractor
     private readonly IConfiguration _cfg;
     private readonly IHttpClientFactory _httpFactory;
     private readonly TesseractOcr _ocr;
+    private readonly DocumentIntelligenceExtractor _docIntel;
     private readonly ILogger<InvoiceLineExtractor> _log;
 
-    public InvoiceLineExtractor(IConfiguration cfg, IHttpClientFactory httpFactory, TesseractOcr ocr, ILogger<InvoiceLineExtractor> log)
+    public InvoiceLineExtractor(IConfiguration cfg, IHttpClientFactory httpFactory, TesseractOcr ocr,
+        DocumentIntelligenceExtractor docIntel, ILogger<InvoiceLineExtractor> log)
     {
-        _cfg = cfg; _httpFactory = httpFactory; _ocr = ocr; _log = log;
+        _cfg = cfg; _httpFactory = httpFactory; _ocr = ocr; _docIntel = docIntel; _log = log;
     }
 
     public async Task<ExtractedInvoice> ExtractAsync(IFormFile file, CancellationToken ct)
+    {
+        string? azureNote = null;
+        if (_docIntel.IsEnabled && DocumentIntelligenceExtractor.Supports(file.ContentType, file.FileName))
+        {
+            try
+            {
+                using var ms = new MemoryStream();
+                await file.CopyToAsync(ms, ct);
+                return await _docIntel.AnalyzeInvoiceAsync(ms.ToArray(), ct);
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                _log.LogWarning("Document Intelligence failed, falling back to local pipeline: {Msg}", e.Message);
+                azureNote = "Azure Document Intelligence was unavailable; read with local OCR instead.";
+            }
+        }
+        var local = await ExtractLocalAsync(file, ct);
+        return azureNote == null ? local : local with { Note = local.Note == null ? azureNote : $"{azureNote} {local.Note}" };
+    }
+
+    private async Task<ExtractedInvoice> ExtractLocalAsync(IFormFile file, CancellationToken ct)
     {
         var swText = System.Diagnostics.Stopwatch.StartNew();
         var (text, source, note) = await GetTextAsync(file, ct);
