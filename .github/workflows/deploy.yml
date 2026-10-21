@@ -18,7 +18,8 @@ concurrency: deploy-production
 
 jobs:
   deploy:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # Skips until Azure is connected (scripts/github-setup.sh azure sets AZURE_RESOURCE_GROUP).
+    if: vars.AZURE_RESOURCE_GROUP != '' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     environment: production
     env:
